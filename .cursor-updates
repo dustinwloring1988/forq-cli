@@ -17,6 +17,10 @@
 
 - Implemented file system tools (listDir, readFile, editFile, deleteFile, createFile) with error handling and security checks.
 - Implemented search tools (fileSearch, ripgrepSearch) with fuzzy filename matching and regex-based content search.
+- Added tools parameter to Anthropic API calls to enable tool functionality in the CLI.
+- Enhanced tool descriptions to follow best practices, including detailed usage guidance and parameter descriptions.
+- Fixed tool calling implementation by properly handling Anthropic API's structured tool_use response format.
+- Implemented complete tool cycle functionality with Claude, allowing tool results to be sent back to the AI for comprehensive responses.
 
 ## 2024-03-04
 
@@ -29,3 +33,10 @@
 - Completed the Documentation & User Onboarding story with README, CLI commands documentation, prompt guidelines, example workflows, and detailed help command implementation.
 - Fixed AI response streaming by replacing queryAI with streamAI in the REPL loop to provide real-time response output instead of showing dots and then the complete response at once.
 - Enhanced system prompt with comprehensive guidelines for better security, improved communication style, detailed task approach instructions, and project memory feature using FORQ.md.
+
+## 2024-03-05
+
+- Added complete tool cycle functionality that sends tool execution results back to Claude for final responses.
+- Implemented configuration option to enable/disable the complete tool cycle feature.
+- Added a new REPL command `/tool-cycle` to toggle the tool cycle setting.
+- Removed deprecated `extractToolCalls` function in favor of new structured response handling.

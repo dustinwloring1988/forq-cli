@@ -26,6 +26,7 @@ export interface ForqConfig {
       model?: string;
       maxTokens?: number;
       temperature?: number;
+      completeToolCycle?: boolean;
     };
     openai?: {
       apiKey?: string;
@@ -264,6 +265,7 @@ export function createDefaultConfig(global: boolean): void {
         model: 'claude-3-opus-20240229',
         maxTokens: 4000,
         temperature: 0.7,
+        completeToolCycle: true,
       },
     },
     tools: {},

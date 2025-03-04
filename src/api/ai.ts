@@ -7,6 +7,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as dotenv from 'dotenv';
 import { Message as ForqMessage } from '../types/messages';
 import { logger } from '../utils/logger';
+import { getToolsSchema } from '../tools';
+import { ToolCall, ToolResult } from '../types/tools';
 
 // Load environment variables
 dotenv.config();
@@ -62,12 +64,57 @@ function extractSystemMessage(messages: ForqMessage[]): string | undefined {
 }
 
 /**
+ * Convert our internal tool schema format to Anthropic's expected format
+ */
+function convertToAnthropicTools(toolsSchema: Record<string, any>[]): Anthropic.Tool[] {
+  return toolsSchema.map((tool) => ({
+    name: tool.function.name,
+    description: tool.function.description,
+    input_schema: tool.function.parameters,
+  }));
+}
+
+/**
+ * Extract tool calls from Anthropic API response
+ */
+function extractToolCallsFromResponse(response: Anthropic.Message): ToolCall[] {
+  const toolCalls: ToolCall[] = [];
+
+  // Check if there are any tool_use content blocks in the response
+  for (const contentBlock of response.content) {
+    if (contentBlock.type === 'tool_use') {
+      toolCalls.push({
+        name: contentBlock.name,
+        parameters: contentBlock.input || {},
+      });
+
+      logger.logAction('Tool Call Detected', {
+        tool: contentBlock.name,
+        parameters: JSON.stringify(contentBlock.input),
+      });
+    }
+  }
+
+  return toolCalls;
+}
+
+/**
+ * Response object that includes both text and tool calls
+ */
+export interface AIResponse {
+  text: string;
+  toolCalls: ToolCall[];
+  stopReason: string | null;
+  toolUseId?: string;
+}
+
+/**
  * Query the AI with a series of messages
  * @param messages Array of messages to send to the AI
  * @param options Optional configuration options
- * @returns Promise resolving to the AI's response text
+ * @returns Promise resolving to an AIResponse object with text and toolCalls
  */
-export async function queryAI(messages: ForqMessage[], options?: AIOptions): Promise<string> {
+export async function queryAI(messages: ForqMessage[], options?: AIOptions): Promise<AIResponse> {
   try {
     const anthropicMessages = convertToAnthropicMessages(messages);
     const systemPrompt = extractSystemMessage(messages);
@@ -84,8 +131,10 @@ export async function queryAI(messages: ForqMessage[], options?: AIOptions): Pro
       temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
+      tools: convertToAnthropicTools(getToolsSchema()),
     });
 
+    // Extract text from the response
     const responseText = response.content
       .map((c) => {
         if (c.type === 'text') {
@@ -95,11 +144,24 @@ export async function queryAI(messages: ForqMessage[], options?: AIOptions): Pro
       })
       .join('');
 
+    // Extract tool calls from the response
+    const toolCalls = extractToolCallsFromResponse(response);
+
     logger.logConversation(`AI Response: ${responseText}`);
-    return responseText;
+    return {
+      text: responseText,
+      toolCalls,
+      stopReason: response.stop_reason,
+      toolUseId:
+        toolCalls.length > 0 ? response.content.find((c) => c.type === 'tool_use')?.id : undefined,
+    };
   } catch (error) {
     logger.logError(error as Error, 'AI API Error');
-    return `Error communicating with AI: ${(error as Error).message}`;
+    return {
+      text: `Error communicating with AI: ${(error as Error).message}`,
+      toolCalls: [],
+      stopReason: 'error',
+    };
   }
 }
 
@@ -107,13 +169,13 @@ export async function queryAI(messages: ForqMessage[], options?: AIOptions): Pro
  * Stream the AI's response to a callback function
  * @param messages Array of messages to send to the AI
  * @param onChunk Callback function to process each chunk of the response
- * @param onComplete Callback function called when the response is complete
+ * @param onComplete Callback function called when the response is complete with full text and tool calls
  * @param options Optional configuration options
  */
 export async function streamAI(
   messages: ForqMessage[],
   onChunk: (text: string) => void,
-  onComplete?: (fullText: string) => void,
+  onComplete?: (response: AIResponse) => void,
   options?: AIOptions,
 ): Promise<void> {
   try {
@@ -126,36 +188,150 @@ export async function streamAI(
       ...options,
     };
 
-    const stream = await anthropic.messages.create({
+    const response = await anthropic.messages.create({
       model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
       max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
       temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
-      stream: true,
+      tools: convertToAnthropicTools(getToolsSchema()),
     });
 
-    let fullResponse = '';
+    // For tool calls, we need the complete response which doesn't work well with streaming
+    // Extract text content
+    const responseText = response.content
+      .map((c) => {
+        if (c.type === 'text') {
+          return c.text;
+        }
+        return '';
+      })
+      .join('');
 
-    for await (const chunk of stream) {
-      if (
-        chunk.type === 'content_block_delta' &&
-        chunk.delta.type === 'text_delta' &&
-        chunk.delta.text
-      ) {
-        const text = chunk.delta.text;
-        fullResponse += text;
-        onChunk(text);
-      }
+    // Send chunks of text to the callback
+    // This simulates streaming for compatibility
+    const chunkSize = 10;
+    for (let i = 0; i < responseText.length; i += chunkSize) {
+      const chunk = responseText.substring(i, i + chunkSize);
+      onChunk(chunk);
+      // Small delay to simulate streaming
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
-    logger.logConversation(`AI Response (streamed): ${fullResponse}`);
+    // Extract tool calls
+    const toolCalls = extractToolCallsFromResponse(response);
+
+    logger.logConversation(`AI Response: ${responseText}`);
 
     if (onComplete) {
-      onComplete(fullResponse);
+      onComplete({
+        text: responseText,
+        toolCalls,
+        stopReason: response.stop_reason,
+        toolUseId:
+          toolCalls.length > 0
+            ? response.content.find((c) => c.type === 'tool_use')?.id
+            : undefined,
+      });
     }
   } catch (error) {
     logger.logError(error as Error, 'AI Streaming Error');
     onChunk(`Error streaming from AI: ${(error as Error).message}`);
+
+    if (onComplete) {
+      onComplete({
+        text: `Error streaming from AI: ${(error as Error).message}`,
+        toolCalls: [],
+        stopReason: 'error',
+      });
+    }
+  }
+}
+
+/**
+ * Send a tool result back to the AI to complete the tool call cycle
+ * @param messages Array of previous messages in the conversation
+ * @param toolResult Result from executing the tool
+ * @param toolUseId ID of the tool use from Claude's response
+ * @param options Optional configuration options
+ * @returns Promise resolving to an AIResponse object
+ */
+export async function sendToolResultToAI(
+  messages: ForqMessage[],
+  toolResult: ToolResult,
+  toolUseId: string,
+  options?: AIOptions,
+): Promise<AIResponse> {
+  try {
+    const anthropicMessages = convertToAnthropicMessages(messages);
+    const systemPrompt = extractSystemMessage(messages);
+
+    // Merge default options with provided options
+    const mergedOptions = {
+      ...DEFAULT_AI_OPTIONS,
+      ...options,
+    };
+
+    // Create tool result message
+    const toolResultMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: JSON.stringify(toolResult.result),
+          ...(toolResult.error ? { is_error: true } : {}),
+        },
+      ],
+    };
+
+    // Log the tool result
+    logger.logAction('Tool Result', {
+      toolUseId,
+      result: toolResult.result,
+      error: toolResult.error,
+    });
+
+    // Add the tool result message to the conversation
+    anthropicMessages.push(toolResultMessage as any);
+
+    // Send to Anthropic API
+    const response = await anthropic.messages.create({
+      model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
+      max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
+      temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
+      messages: anthropicMessages,
+      system: systemPrompt,
+      tools: convertToAnthropicTools(getToolsSchema()),
+    });
+
+    // Extract text content
+    const responseText = response.content
+      .map((c) => {
+        if (c.type === 'text') {
+          return c.text;
+        }
+        return '';
+      })
+      .join('');
+
+    // Extract tool calls
+    const toolCalls = extractToolCallsFromResponse(response);
+
+    logger.logConversation(`AI Response after tool result: ${responseText}`);
+    return {
+      text: responseText,
+      toolCalls,
+      stopReason: response.stop_reason,
+      toolUseId:
+        toolCalls.length > 0 ? response.content.find((c) => c.type === 'tool_use')?.id : undefined,
+    };
+  } catch (error) {
+    logger.logError(error as Error, 'AI Tool Result Error');
+    return {
+      text: `Error sending tool result to AI: ${(error as Error).message}`,
+      toolCalls: [],
+      stopReason: 'error',
+    };
   }
 }

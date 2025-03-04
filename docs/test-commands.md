@@ -16,7 +16,7 @@
 
 ### Search Functionality
 
-8. `Find files containing "repl"` - Test content search with ripgrepSearch
+8. `Find files containing the word "repl" in them` - Test content search with ripgrepSearch
 9. `Search for files named "config"` - Test fileSearch functionality
 
 ### File Manipulations (Test in a safe directory)

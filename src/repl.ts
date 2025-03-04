@@ -14,7 +14,7 @@ import { loadSystemPrompt } from './config/systemPrompt';
 import { queryAI, streamAI } from './api/ai';
 import { logger } from './utils/logger';
 import { analytics } from './utils/analytics';
-import { loadTools, extractToolCalls, executeTool, getAllTools, getToolsSchema } from './tools';
+import { loadTools, executeTool, getAllTools, getToolsSchema } from './tools';
 import { ToolContext } from './types/tools';
 import {
   initializePermissionConfig,
@@ -204,6 +204,9 @@ export async function startRepl(): Promise<void> {
     console.log(`  Model: ${currentConfig.api?.anthropic?.model || 'default'}`);
     console.log(`  Max Tokens: ${currentConfig.api?.anthropic?.maxTokens || 'default'}`);
     console.log(`  Temperature: ${currentConfig.api?.anthropic?.temperature || 'default'}`);
+    console.log(
+      `  Complete Tool Cycle: ${currentConfig.api?.anthropic?.completeToolCycle !== false ? 'Yes' : 'No'}`,
+    );
 
     console.log(chalk[infoColor]('REPL Settings:'));
     console.log(`  History Size: ${currentConfig.repl?.historySize || 'default'}`);
@@ -265,6 +268,7 @@ export async function startRepl(): Promise<void> {
           chalk.cyan('/compact') + ' - Compact conversation history to reduce token usage',
         );
         console.log(chalk.cyan('/config') + ' - Display current configuration');
+        console.log(chalk.cyan('/tool-cycle') + ' - Toggle complete tool cycle feature');
       } else if (trimmedLine === '/clear') {
         console.clear();
       } else if (trimmedLine === '/exit') {
@@ -283,97 +287,148 @@ export async function startRepl(): Promise<void> {
         compactConversationHistory();
       } else if (trimmedLine === '/config') {
         displayConfig();
-      } else if (trimmedLine) {
-        // Create user message
-        const userMessage: Message = {
-          role: 'user',
-          content: trimmedLine,
-        };
+      } else if (trimmedLine === '/tool-cycle') {
+        // Toggle the tool cycle setting
+        const currentValue = config.api?.anthropic?.completeToolCycle;
+        const newValue = !currentValue;
 
-        // Add user message to conversation
-        conversation.push(userMessage);
-
-        // Log user message
-        logger.logConversation(`User: ${trimmedLine}`);
-
-        // Show thinking indicator
-        process.stdout.write(chalk.gray('Thinking... '));
-
-        try {
-          // Show thinking indicator
-          const thinkingInterval = setInterval(() => {
-            process.stdout.write(chalk[infoColor]('.'));
-          }, 500);
-
-          // Get API config values
-          const apiConfig = config.api?.anthropic;
-
-          // Clear thinking indicator before we start streaming
-          clearInterval(thinkingInterval);
-          readline.clearLine(process.stdout, 0);
-          readline.cursorTo(process.stdout, 0);
-
-          // Use streamAI instead of queryAI to get streaming responses
-          let responseContent = '';
-          await streamAI(
-            conversation,
-            (chunk) => {
-              // Display each chunk as it arrives
-              process.stdout.write(chalk[responseColor](chunk));
-              responseContent += chunk;
-            },
-            (fullText) => {
-              // Called when streaming is complete
-              responseContent = fullText;
-            },
-            {
-              maxTokens: apiConfig?.maxTokens,
-              temperature: apiConfig?.temperature,
-            },
+        if (config.api && config.api.anthropic) {
+          config.api.anthropic.completeToolCycle = newValue;
+          console.log(
+            chalk[infoColor](`Complete tool cycle ${newValue ? 'enabled' : 'disabled'}.`),
           );
+          console.log(
+            chalk[infoColor](
+              newValue
+                ? 'Tool results will be sent back to Claude for a final response.'
+                : 'Tool results will be executed without sending back to Claude.',
+            ),
+          );
+        } else {
+          console.log(
+            chalk[errorColor](
+              'Unable to toggle tool cycle setting. Configuration not properly initialized.',
+            ),
+          );
+        }
+      } else if (trimmedLine) {
+        try {
+          const userInput = trimmedLine;
+
+          // Add user message to conversation history
+          conversation.push({
+            role: 'user',
+            content: userInput,
+          });
+
+          // Log user message to conversation log
+          logger.logConversation(`User: ${userInput}`);
+
+          // Show a thinking indicator
+          console.log(chalk[promptColor]('Thinking...'));
+
+          // Get AI response using stream for better UX
+          let responseContent = '';
+
+          // Streaming setup
+          const handleChunk = (chunk: string) => {
+            // Print chunk without a newline
+            process.stdout.write(chunk);
+            responseContent += chunk;
+          };
+
+          // Complete response handler
+          const handleComplete = async (response: {
+            text: string;
+            toolCalls: any[];
+            stopReason: string | null;
+            toolUseId?: string;
+          }) => {
+            // Update response content
+            responseContent = response.text;
+
+            // Add assistant message to conversation
+            conversation.push({
+              role: 'assistant',
+              content: responseContent,
+            });
+
+            // Log assistant response
+            logger.logConversation(`AI: ${responseContent}`);
+
+            // Log conversation length and check if auto-compact is needed
+            if (conversation.length >= autoCompactThreshold) {
+              console.log(
+                chalk[infoColor](
+                  `Conversation length (${conversation.length}) exceeded threshold. Auto-compacting...`,
+                ),
+              );
+              compactConversationHistory();
+            }
+
+            // Process tool calls if any
+            if (response.toolCalls && response.toolCalls.length > 0) {
+              for (const toolCall of response.toolCalls) {
+                // Log the tool call
+                logger.logAction(`Executing tool: ${toolCall.name}`);
+                analytics.trackToolUsage(toolCall.name);
+
+                try {
+                  // Execute the tool and get result
+                  const result = await executeTool(toolCall, toolContext);
+                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+
+                  // Check if we should complete the tool cycle by sending result back to Claude
+                  const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
+                  const isToolUse = response.stopReason === 'tool_use';
+
+                  if (completeToolCycle && isToolUse && response.toolUseId) {
+                    console.log(chalk[infoColor]('Sending tool result back to Claude...'));
+
+                    // Import the sendToolResultToAI function from the AI API
+                    const { sendToolResultToAI } = await import('./api/ai.js');
+
+                    // Create a shallow copy of the conversation to avoid modifying the original
+                    const conversationCopy = [...conversation];
+
+                    // Send the tool result back to Claude
+                    const finalResponse = await sendToolResultToAI(
+                      conversationCopy,
+                      result,
+                      response.toolUseId,
+                      {},
+                    );
+
+                    // Process the final response
+                    if (finalResponse) {
+                      // Print the response
+                      console.log('\n' + chalk[responseColor](finalResponse.text));
+
+                      // Add the final response to the conversation
+                      conversation.push({
+                        role: 'assistant',
+                        content: finalResponse.text,
+                      });
+
+                      // Log the final response
+                      logger.logConversation(`AI (final): ${finalResponse.text}`);
+                    }
+                  }
+                } catch (error) {
+                  const errorMessage = (error as Error).message;
+                  console.error(
+                    chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
+                  );
+                }
+              }
+            }
+          };
+
+          // Stream the response
+          await streamAI(conversation, handleChunk, handleComplete as (response: any) => void);
 
           // Add a newline after streaming completes
           console.log('');
-
-          // Add assistant message to conversation
-          conversation.push({
-            role: 'assistant',
-            content: responseContent,
-          });
-
-          // Log assistant response
-          logger.logConversation(`AI: ${responseContent}`);
-
-          // Log conversation length and check if auto-compact is needed
-          if (conversation.length >= autoCompactThreshold) {
-            console.log(
-              chalk[infoColor](
-                `Conversation length (${conversation.length}) exceeded threshold. Auto-compacting...`,
-              ),
-            );
-            compactConversationHistory();
-          }
-
-          // Extract and execute tool calls from the AI response
-          const toolCalls = extractToolCalls(responseContent);
-          if (toolCalls.length > 0) {
-            for (const toolCall of toolCalls) {
-              // Log the tool call
-              logger.logAction(`Executing tool: ${toolCall.name}`);
-              analytics.trackToolUsage(toolCall.name);
-
-              try {
-                const result = await executeTool(toolCall, toolContext);
-                // For simplicity, just log the result
-                console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
-              } catch (error) {
-                const errorMessage = (error as Error).message;
-                console.error(
-                  chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
-                );
-              }
-            }
-          }
         } catch (error) {
           console.error(chalk[errorColor](`Error: ${(error as Error).message}`));
           logger.logError((error as Error).message, 'REPL Error');

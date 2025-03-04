@@ -47,14 +47,45 @@ export function getAllTools(): Tool[] {
  * Used to inform the AI about available tools
  */
 export function getToolsSchema(): Record<string, any>[] {
-  return Array.from(tools.values()).map((tool) => ({
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameterSchema,
-    },
-  }));
+  return Array.from(tools.values()).map((tool) => {
+    // Get parameter descriptions to enhance tool description
+    let enhancedDescription = tool.description;
+
+    // Add usage guidance
+    enhancedDescription += ` Use this tool when you need to ${tool.name.toLowerCase()} in the user's environment.`;
+
+    // Add parameter descriptions
+    if (tool.parameterSchema && tool.parameterSchema.properties) {
+      enhancedDescription += ` Parameters:`;
+      for (const [paramName, paramInfo] of Object.entries(tool.parameterSchema.properties || {})) {
+        if (
+          paramInfo &&
+          typeof paramInfo === 'object' &&
+          'description' in paramInfo &&
+          paramInfo.description
+        ) {
+          const isRequired = tool.parameterSchema.required?.includes(paramName)
+            ? 'required'
+            : 'optional';
+          enhancedDescription += ` - ${paramName} (${isRequired}): ${paramInfo.description}.`;
+        }
+      }
+    }
+
+    // Add permission info if applicable
+    if (tool.requiresPermission) {
+      enhancedDescription += ` This tool requires user permission before execution.`;
+    }
+
+    return {
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: enhancedDescription,
+        parameters: tool.parameterSchema,
+      },
+    };
+  });
 }
 
 /**
@@ -264,41 +295,4 @@ export async function executeTool(toolCall: ToolCall, context: ToolContext): Pro
       error: errorMessage,
     };
   }
-}
-
-/**
- * Extract tool calls from AI response
- * This is a placeholder implementation - this would need to be
- * adapted based on how your AI returns tool calls
- * @param aiResponse The response from the AI
- * @returns Array of extracted tool calls
- */
-export function extractToolCalls(aiResponse: string): ToolCall[] {
-  // This is a simplified implementation that looks for a specific format
-  // In a real implementation, you would parse the AI's response format
-  const toolCallRegex = /<tool:([^\s>]+)>([\s\S]*?)<\/tool>/g;
-  const toolCalls: ToolCall[] = [];
-
-  let match;
-  while ((match = toolCallRegex.exec(aiResponse)) !== null) {
-    try {
-      const name = match[1];
-      const parametersJson = match[2].trim();
-
-      // Handle empty parameters or empty string
-      let parameters = {};
-      if (parametersJson && parametersJson !== '') {
-        parameters = JSON.parse(parametersJson);
-      }
-
-      toolCalls.push({
-        name,
-        parameters,
-      });
-    } catch (error) {
-      logger.logError(error as Error, 'Failed to parse tool call');
-    }
-  }
-
-  return toolCalls;
 }
