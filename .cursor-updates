@@ -29,3 +29,4 @@
 - Completed the Documentation & User Onboarding story with README, CLI commands documentation, prompt guidelines, example workflows, and detailed help command implementation.
 - Fixed AI response streaming by replacing queryAI with streamAI in the REPL loop to provide real-time response output instead of showing dots and then the complete response at once.
 - Improved tool usage by adding tool schemas to the AI API calls and enhancing the system prompt to explicitly instruct the AI to prefer built-in tools over suggesting equivalent commands.
+- Fixed tool schema format by updating from 'function' to 'custom' type to comply with Anthropic API requirements.

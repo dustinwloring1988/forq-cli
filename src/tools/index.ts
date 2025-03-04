@@ -48,12 +48,10 @@ export function getAllTools(): Tool[] {
  */
 export function getToolsSchema(): Record<string, any>[] {
   return Array.from(tools.values()).map((tool) => ({
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameterSchema,
-    },
+    type: 'custom',
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameterSchema,
   }));
 }
 
