@@ -15,7 +15,7 @@ import {
 } from '../utils/config';
 
 // Read package.json for version
-const packageJsonPath = path.join(__dirname, '..', '..', 'package.json');
+const packageJsonPath = path.join(__dirname, '..', '..', '..', 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 
 const program = new Command();

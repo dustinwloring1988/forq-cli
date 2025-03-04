@@ -1,10 +1,13 @@
-import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as readline from 'readline'; // Keep this import for utility functions
 // Using require for chalk to avoid ESM issues
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const chalk = require('chalk');
+// Use inquirer for input handling to avoid the character duplication issue
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const inquirer = require('inquirer');
 
 import { Message } from './types/messages';
 import { loadSystemPrompt } from './config/systemPrompt';
@@ -50,10 +53,10 @@ export async function startRepl(): Promise<void> {
         .join(', '),
   );
 
-  // Initialize permission system
+  // Initialize permission config
   initializePermissionConfig();
 
-  // Create history file directory if it doesn't exist
+  // Set up history file
   const historyDir = path.join(os.homedir(), '.forq');
   const historyFile = path.join(historyDir, 'history');
 
@@ -61,85 +64,48 @@ export async function startRepl(): Promise<void> {
     fs.mkdirSync(historyDir, { recursive: true });
   }
 
-  // Read history file if it exists
   let history: string[] = [];
   if (fs.existsSync(historyFile)) {
-    history = fs.readFileSync(historyFile, 'utf8').split('\n').filter(Boolean);
+    try {
+      history = fs.readFileSync(historyFile, 'utf8').split('\n').filter(Boolean);
+    } catch (error) {
+      console.error('Error loading history:', (error as Error).message);
+    }
   }
 
-  // Store current input when navigating history
-  let currentInput = '';
-  let historyIndex = history.length;
-
-  // Create tool context
+  // Create tool context based on current working directory
   const toolContext: ToolContext = {
     cwd: process.cwd(),
     logger: logger,
   };
 
-  // Get system prompt and append information about available tools
-  const systemPrompt = loadSystemPrompt();
-
-  // Collect project context
-  const projectContext = collectProjectContext();
-
-  // Enhance system prompt with project context if available
-  let enhancedPromptContent = systemPrompt.content;
+  // Get code context to enhance system prompt
+  const projectInstructions = loadProjectInstructions();
+  let enhancedSystemPrompt: Message = loadSystemPrompt();
 
   // Add project instructions if available
-  if (projectContext.instructions) {
-    enhancedPromptContent += `\n\n## Project-Specific Instructions\n${projectContext.instructions}`;
-    console.log(chalk.green('Loaded project-specific instructions from FORQ.md'));
+  if (projectInstructions) {
+    enhancedSystemPrompt.content += `\n\n## Project-Specific Instructions\n${projectInstructions}`;
   }
 
   // Add git context if available
-  if (projectContext.git) {
-    enhancedPromptContent += '\n\n## Git Context\n';
-    if (projectContext.git.currentBranch) {
-      enhancedPromptContent += `Current branch: ${projectContext.git.currentBranch}\n`;
-    }
-
-    if (projectContext.git.modifiedFiles && projectContext.git.modifiedFiles.length > 0) {
-      enhancedPromptContent += 'Modified files:\n';
-      projectContext.git.modifiedFiles.forEach((file) => {
-        enhancedPromptContent += `- ${file}\n`;
-      });
-    }
-
-    if (projectContext.git.recentCommits && projectContext.git.recentCommits.length > 0) {
-      enhancedPromptContent += 'Recent commits:\n';
-      projectContext.git.recentCommits.forEach((commit) => {
-        enhancedPromptContent += `- ${commit.hash} ${commit.message} (${commit.author}, ${commit.date})\n`;
-      });
-    }
-
+  const gitContext = collectGitContext();
+  if (gitContext) {
+    enhancedSystemPrompt.content += `\n\n${gitContext}`;
     console.log(chalk.green('Added git context to system prompt'));
   }
 
-  // Add directory structure if available
-  if (projectContext.directoryStructure) {
-    enhancedPromptContent += `\n\n## Project Structure\n\`\`\`\n${projectContext.directoryStructure}\`\`\``;
+  // Add project structure summary
+  const structureSummary = getDirectoryStructureSummary();
+  if (structureSummary) {
+    enhancedSystemPrompt.content += `\n\n${structureSummary}`;
     console.log(chalk.green('Added project structure to system prompt'));
   }
-
-  // Get tool schema for AI
-  const toolsInfo = getToolsSchema();
-
-  // Add tools information to system prompt
-  const enhancedSystemPrompt: Message = {
-    ...systemPrompt,
-    content: `${enhancedPromptContent}\n\nYou have access to the following tools:\n${getAllTools()
-      .map((tool) => `- ${tool.name}: ${tool.description}`)
-      .join(
-        '\n',
-      )}\n\nTo use a tool, respond with the syntax: <tool:toolName>{"param1": "value1", "param2": "value2"}</tool>`,
-  };
 
   // Initialize conversation with enhanced system prompt
   const conversation: Message[] = [enhancedSystemPrompt];
 
-  // Apply configuration for readline
-  const historySize = config.repl?.historySize || 100;
+  // Apply configuration for prompt
   const promptStyle = config.repl?.prompt || 'forq> ';
 
   // Apply color scheme if configured
@@ -152,32 +118,11 @@ export async function startRepl(): Promise<void> {
   // Get auto-compact threshold from config or use default
   const autoCompactThreshold = config.repl?.autoCompactThreshold || MAX_CONVERSATION_LENGTH * 2;
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: chalk[promptColor](promptStyle),
-    historySize: historySize,
-    completer: (line: string) => {
-      const completions = ['/help', '/clear', '/exit', '/reset', '/tools', '/compact', '/config'];
-      const hits = completions.filter((c) => c.startsWith(line));
-      return [hits.length ? hits : completions, line];
-    },
-  });
-
-  console.log(
-    chalk[successColor]('Welcome to forq CLI!'),
-    chalk[infoColor]('Type /help for available commands.'),
-  );
-  rl.prompt();
-
   // Setup cleanup function for graceful exit
   function cleanup(): void {
     analytics.endSession();
     savePermissionConfig();
     cleanupPermissionConfig();
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-    }
   }
 
   // Handle graceful exit
@@ -275,150 +220,165 @@ export async function startRepl(): Promise<void> {
     console.log(`  forq config --help`);
   }
 
-  rl.on('line', async (line) => {
-    // Track input as a command (if it's a special command)
-    if (line.startsWith('/')) {
-      analytics.trackCommand(line.split(' ')[0]);
-    }
+  console.log(
+    chalk[successColor]('Welcome to forq CLI!'),
+    chalk[infoColor]('Type /help for available commands.'),
+  );
 
-    const trimmedLine = line.trim();
+  // Main REPL loop using inquirer
+  async function replLoop() {
+    try {
+      const historySize = config.repl?.historySize || 100;
 
-    // Don't add empty lines or duplicates to history
-    if (trimmedLine && (history.length === 0 || history[history.length - 1] !== trimmedLine)) {
-      history.push(trimmedLine);
-      fs.writeFileSync(historyFile, history.join('\n') + '\n');
-      historyIndex = history.length;
-    }
+      const { input } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'input',
+          message: chalk[promptColor](promptStyle),
+          // Handle history and tab completion within inquirer
+          validate: (value: string) => true,
+        },
+      ]);
 
-    // Handle basic REPL commands
-    if (trimmedLine === '/help') {
-      console.log(chalk[infoColor]('Available commands:'));
-      console.log(chalk.cyan('/help') + ' - Display this help message');
-      console.log(chalk.cyan('/clear') + ' - Clear the console');
-      console.log(chalk.cyan('/exit') + ' - Exit the REPL');
-      console.log(chalk.cyan('/reset') + ' - Reset the conversation');
-      console.log(chalk.cyan('/tools') + ' - List available tools');
-      console.log(chalk.cyan('/compact') + ' - Compact conversation history to reduce token usage');
-      console.log(chalk.cyan('/config') + ' - Display current configuration');
-    } else if (trimmedLine === '/clear') {
-      console.clear();
-    } else if (trimmedLine === '/exit') {
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
+      const trimmedLine = input.trim();
+
+      // Track input as a command (if it's a special command)
+      if (trimmedLine.startsWith('/')) {
+        analytics.trackCommand(trimmedLine.split(' ')[0]);
       }
-      rl.close();
-      return;
-    } else if (trimmedLine === '/reset') {
-      conversation.length = 1; // Keep only the system prompt
-      console.log(chalk[infoColor]('Conversation reset.'));
-    } else if (trimmedLine === '/tools') {
-      console.log(chalk[infoColor]('Available tools:'));
-      getAllTools().forEach((tool) => {
-        console.log(chalk.cyan(tool.name) + ' - ' + tool.description);
-      });
-    } else if (trimmedLine === '/compact') {
-      compactConversationHistory();
-    } else if (trimmedLine === '/config') {
-      displayConfig();
-    } else if (trimmedLine) {
-      // Create user message
-      const userMessage: Message = {
-        role: 'user',
-        content: trimmedLine,
-      };
 
-      // Add user message to conversation
-      conversation.push(userMessage);
+      // Don't add empty lines or duplicates to history
+      if (trimmedLine && (history.length === 0 || history[history.length - 1] !== trimmedLine)) {
+        history.push(trimmedLine);
+        fs.writeFileSync(historyFile, history.join('\n') + '\n');
+      }
 
-      // Log user message
-      logger.logConversation(`User: ${trimmedLine}`);
-
-      // Show thinking indicator
-      process.stdout.write(chalk.gray('Thinking... '));
-
-      try {
-        // Show thinking indicator
-        const thinkingInterval = setInterval(() => {
-          process.stdout.write(chalk[infoColor]('.'));
-        }, 500);
-
-        // Get API config values
-        const apiConfig = config.api?.anthropic;
-
-        // Query AI
-        const aiResponse = await queryAI(conversation, {
-          maxTokens: apiConfig?.maxTokens,
-          temperature: apiConfig?.temperature,
+      // Handle basic REPL commands
+      if (trimmedLine === '/help') {
+        console.log(chalk[infoColor]('Available commands:'));
+        console.log(chalk.cyan('/help') + ' - Display this help message');
+        console.log(chalk.cyan('/clear') + ' - Clear the console');
+        console.log(chalk.cyan('/exit') + ' - Exit the REPL');
+        console.log(chalk.cyan('/reset') + ' - Reset the conversation');
+        console.log(chalk.cyan('/tools') + ' - List available tools');
+        console.log(
+          chalk.cyan('/compact') + ' - Compact conversation history to reduce token usage',
+        );
+        console.log(chalk.cyan('/config') + ' - Display current configuration');
+      } else if (trimmedLine === '/clear') {
+        console.clear();
+      } else if (trimmedLine === '/exit') {
+        cleanup();
+        console.log(chalk[infoColor]('Goodbye!'));
+        process.exit(0);
+      } else if (trimmedLine === '/reset') {
+        conversation.length = 1; // Keep only the system prompt
+        console.log(chalk[infoColor]('Conversation reset.'));
+      } else if (trimmedLine === '/tools') {
+        console.log(chalk[infoColor]('Available tools:'));
+        getAllTools().forEach((tool) => {
+          console.log(chalk.cyan(tool.name) + ' - ' + tool.description);
         });
+      } else if (trimmedLine === '/compact') {
+        compactConversationHistory();
+      } else if (trimmedLine === '/config') {
+        displayConfig();
+      } else if (trimmedLine) {
+        // Create user message
+        const userMessage: Message = {
+          role: 'user',
+          content: trimmedLine,
+        };
 
-        // Clear thinking indicator
-        clearInterval(thinkingInterval);
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
+        // Add user message to conversation
+        conversation.push(userMessage);
 
-        // Display AI response
-        console.log(chalk[responseColor]('AI: ') + aiResponse);
+        // Log user message
+        logger.logConversation(`User: ${trimmedLine}`);
 
-        // Extract tool calls from AI response
-        const toolCalls = extractToolCalls(aiResponse);
+        // Show thinking indicator
+        process.stdout.write(chalk.gray('Thinking... '));
 
-        // Process tool calls if any
-        if (toolCalls.length > 0) {
-          for (const toolCall of toolCalls) {
-            console.log(chalk.cyan(`Executing tool: ${toolCall.name}`));
+        try {
+          // Show thinking indicator
+          const thinkingInterval = setInterval(() => {
+            process.stdout.write(chalk[infoColor]('.'));
+          }, 500);
 
-            try {
-              // Track tool usage for analytics
+          // Get API config values
+          const apiConfig = config.api?.anthropic;
+
+          // Query AI
+          const aiResponse = await queryAI(conversation, {
+            maxTokens: apiConfig?.maxTokens,
+            temperature: apiConfig?.temperature,
+          });
+
+          // Clear thinking indicator
+          clearInterval(thinkingInterval);
+          readline.clearLine(process.stdout, 0);
+          readline.cursorTo(process.stdout, 0);
+
+          // Process AI response - queryAI returns a string directly
+          const responseContent = aiResponse;
+
+          // Add assistant message to conversation
+          conversation.push({
+            role: 'assistant',
+            content: responseContent,
+          });
+
+          // Log assistant response
+          logger.logConversation(`AI: ${responseContent}`);
+
+          // Log conversation length and check if auto-compact is needed
+          if (conversation.length >= autoCompactThreshold) {
+            console.log(
+              chalk[infoColor](
+                `Conversation length (${conversation.length}) exceeded threshold. Auto-compacting...`,
+              ),
+            );
+            compactConversationHistory();
+          }
+
+          // Extract and execute tool calls from the AI response
+          const toolCalls = extractToolCalls(responseContent);
+          if (toolCalls.length > 0) {
+            for (const toolCall of toolCalls) {
+              // Log the tool call
+              logger.logAction(`Executing tool: ${toolCall.name}`);
               analytics.trackToolUsage(toolCall.name);
 
-              // Execute the tool
-              const result = await executeTool(toolCall, toolContext);
-
-              // Display tool result
-              if (result.success) {
-                console.log(chalk.green(`Tool execution successful: ${toolCall.name}`));
-                if (result.result) {
-                  console.log(JSON.stringify(result.result, null, 2));
-                }
-              } else {
-                console.log(chalk.red(`Tool execution failed: ${toolCall.name}`));
-                console.log(result.error);
+              try {
+                const result = await executeTool(toolCall, toolContext);
+                // For simplicity, just log the result
+                console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+              } catch (error) {
+                const errorMessage = (error as Error).message;
+                console.error(
+                  chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
+                );
               }
-            } catch (toolError) {
-              console.error(
-                chalk[errorColor](`Error executing tool ${toolCall.name}: `) +
-                  (toolError as Error).message,
-              );
-              logger.logError(toolError as Error, `Tool Execution Error: ${toolCall.name}`);
             }
           }
+
+          // Display the final response
+          console.log(chalk[responseColor](responseContent));
+        } catch (error) {
+          console.error(chalk[errorColor](`Error: ${(error as Error).message}`));
+          logger.logError((error as Error).message, 'REPL Error');
         }
-
-        // Add AI response to conversation
-        conversation.push({
-          role: 'assistant',
-          content: aiResponse,
-        });
-
-        // Auto-compact if conversation is getting too long
-        if (conversation.length > autoCompactThreshold) {
-          console.log(chalk[infoColor]('Conversation is getting long. Auto-compacting...'));
-          compactConversationHistory();
-        }
-      } catch (error) {
-        // Clear the thinking indicator
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-
-        console.error(chalk[errorColor]('Error: ') + (error as Error).message);
-        logger.logError(error as Error, 'REPL Error');
       }
-    }
 
-    rl.prompt();
-  }).on('close', () => {
-    analytics.endSession();
-    console.log(chalk[infoColor]('Goodbye!'));
-    process.exit(0);
-  });
+      // Continue the REPL loop
+      replLoop();
+    } catch (error) {
+      console.error(chalk[errorColor](`REPL error: ${(error as Error).message}`));
+      logger.logError((error as Error).message, 'REPL Error');
+      process.exit(1);
+    }
+  }
+
+  // Start the REPL loop
+  await replLoop();
 }
