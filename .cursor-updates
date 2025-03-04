@@ -10,6 +10,7 @@
 - Implemented semantic tools: embedding, semantic search, and read semantic search files
 - Implemented bash tool for secure command execution with persistence
 - Added comprehensive permission system with user prompting and persistent configuration
+- Implemented Context Management functionality, including loading project instructions from FORQ.md, collecting git context, providing directory structure summary, and implementing conversation history compaction via the `/compact` command.
 
 # Cursor Updates
 

@@ -1,0 +1,50 @@
+# FORQ.md - Project-Specific Instructions
+
+This file contains project-specific instructions and guidance for the AI when using the forq CLI tool.
+Place this file in the root of your project and customize to provide context about your project.
+
+## Project Overview
+
+Project Name: [Your Project Name]
+Description: [Brief description of what your project does]
+Tech Stack: [Key technologies used]
+Architecture: [Brief overview of the architecture]
+
+## Code Style & Conventions
+
+- [Style guide or linting preferences]
+- [Naming conventions]
+- [Architecture patterns to follow]
+- [Testing approach]
+
+## Key Directories
+
+- `/src` - Source code
+- `/tests` - Unit and integration tests
+- `/docs` - Documentation
+- `/scripts` - Build and utility scripts
+
+## Development Workflow
+
+- [Branch naming conventions]
+- [Commit message format]
+- [PR requirements]
+- [CI/CD pipeline information]
+
+## Important Notes
+
+- [Special handling instructions]
+- [Known issues or gotchas]
+- [Performance considerations]
+- [Security requirements]
+
+## Acceptance Criteria
+
+When implementing new features or fixing bugs, ensure that:
+- [Criteria 1]
+- [Criteria 2]
+- [Criteria 3]
+
+---
+
+Feel free to customize this template for your specific project needs. The AI will use this information to provide more contextually relevant assistance. 

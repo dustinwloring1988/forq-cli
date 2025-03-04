@@ -18,6 +18,15 @@ import {
   cleanupPermissionConfig,
 } from './config/permissions-config';
 import { closePrompt } from './utils/prompt';
+import {
+  collectProjectContext,
+  loadProjectInstructions,
+  collectGitContext,
+  getDirectoryStructureSummary,
+} from './utils/context';
+
+// Maximum number of messages to keep in history before compacting
+const MAX_CONVERSATION_LENGTH = 20;
 
 /**
  * Interactive REPL (Read-Eval-Print Loop) for the forq CLI
@@ -62,13 +71,55 @@ export async function startRepl(): Promise<void> {
   // Get system prompt and append information about available tools
   const systemPrompt = loadSystemPrompt();
 
+  // Collect project context
+  const projectContext = collectProjectContext();
+
+  // Enhance system prompt with project context if available
+  let enhancedPromptContent = systemPrompt.content;
+
+  // Add project instructions if available
+  if (projectContext.instructions) {
+    enhancedPromptContent += `\n\n## Project-Specific Instructions\n${projectContext.instructions}`;
+    console.log(chalk.green('Loaded project-specific instructions from FORQ.md'));
+  }
+
+  // Add git context if available
+  if (projectContext.git) {
+    enhancedPromptContent += '\n\n## Git Context\n';
+    if (projectContext.git.currentBranch) {
+      enhancedPromptContent += `Current branch: ${projectContext.git.currentBranch}\n`;
+    }
+
+    if (projectContext.git.modifiedFiles && projectContext.git.modifiedFiles.length > 0) {
+      enhancedPromptContent += 'Modified files:\n';
+      projectContext.git.modifiedFiles.forEach((file) => {
+        enhancedPromptContent += `- ${file}\n`;
+      });
+    }
+
+    if (projectContext.git.recentCommits && projectContext.git.recentCommits.length > 0) {
+      enhancedPromptContent += 'Recent commits:\n';
+      projectContext.git.recentCommits.forEach((commit) => {
+        enhancedPromptContent += `- ${commit.hash} ${commit.message} (${commit.author}, ${commit.date})\n`;
+      });
+    }
+
+    console.log(chalk.green('Added git context to system prompt'));
+  }
+
+  // Add directory structure if available
+  if (projectContext.directoryStructure) {
+    enhancedPromptContent += `\n\n## Project Structure\n\`\`\`\n${projectContext.directoryStructure}\`\`\``;
+    console.log(chalk.green('Added project structure to system prompt'));
+  }
+
   // Get tool schema for AI
   const toolsInfo = getToolsSchema();
 
   // Add tools information to system prompt
   const enhancedSystemPrompt: Message = {
     ...systemPrompt,
-    content: `${systemPrompt.content}\n\nYou have access to the following tools:\n${getAllTools()
+    content: `${enhancedPromptContent}\n\nYou have access to the following tools:\n${getAllTools()
       .map((tool) => `- ${tool.name}: ${tool.description}`)
       .join(
         '\n',
@@ -84,7 +135,7 @@ export async function startRepl(): Promise<void> {
     prompt: chalk.blue('forq> '),
     historySize: 100,
     completer: (line: string) => {
-      const completions = ['/help', '/clear', '/exit', '/reset', '/tools'];
+      const completions = ['/help', '/clear', '/exit', '/reset', '/tools', '/compact'];
       const hits = completions.filter((c) => c.startsWith(line));
       return [hits.length ? hits : completions, line];
     },
@@ -140,6 +191,57 @@ export async function startRepl(): Promise<void> {
     }
   });
 
+  /**
+   * Compacts the conversation history to reduce token usage
+   * Keeps the system prompt, summarizes older messages, and preserves recent messages
+   */
+  function compactConversationHistory(): void {
+    if (conversation.length <= 2) {
+      console.log(chalk.yellow('Conversation too short to compact.'));
+      return;
+    }
+
+    // Always keep the system prompt (first message)
+    const systemPrompt = conversation[0];
+
+    // If conversation is already small, don't compact
+    if (conversation.length <= MAX_CONVERSATION_LENGTH) {
+      console.log(chalk.yellow('Conversation already compact.'));
+      return;
+    }
+
+    // Determine which messages to keep in full and which to summarize
+    const keepCount = Math.min(MAX_CONVERSATION_LENGTH, conversation.length - 1);
+    const messagesToSummarize = conversation.slice(1, -keepCount);
+    const messagesToKeep = conversation.slice(-keepCount);
+
+    // Create a summary message
+    const summaryContent =
+      `[This is a summary of ${messagesToSummarize.length} earlier messages in the conversation]\n\n` +
+      messagesToSummarize
+        .map((msg) => {
+          return `${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}: ${
+            msg.content.length > 100 ? msg.content.substring(0, 100) + '...' : msg.content
+          }`;
+        })
+        .join('\n\n');
+
+    // Create a new conversation with: system prompt, summary message, and recent messages
+    conversation.length = 0;
+    conversation.push(systemPrompt);
+    conversation.push({
+      role: 'system',
+      content: summaryContent,
+    });
+    messagesToKeep.forEach((msg) => conversation.push(msg));
+
+    console.log(
+      chalk.green(
+        `Compacted conversation history. Summarized ${messagesToSummarize.length} messages.`,
+      ),
+    );
+  }
+
   rl.on('line', async (line) => {
     const trimmedLine = line.trim();
 
@@ -158,6 +260,7 @@ export async function startRepl(): Promise<void> {
       console.log(chalk.cyan('/exit') + ' - Exit the REPL');
       console.log(chalk.cyan('/reset') + ' - Reset the conversation');
       console.log(chalk.cyan('/tools') + ' - List available tools');
+      console.log(chalk.cyan('/compact') + ' - Compact conversation history to reduce token usage');
     } else if (trimmedLine === '/clear') {
       console.clear();
     } else if (trimmedLine === '/exit') {
@@ -174,6 +277,8 @@ export async function startRepl(): Promise<void> {
       getAllTools().forEach((tool) => {
         console.log(chalk.cyan(tool.name) + ' - ' + tool.description);
       });
+    } else if (trimmedLine === '/compact') {
+      compactConversationHistory();
     } else if (trimmedLine) {
       // Create user message
       const userMessage: Message = {
@@ -233,6 +338,12 @@ export async function startRepl(): Promise<void> {
           role: 'assistant',
           content: aiResponse,
         });
+
+        // Auto-compact if conversation is getting too long
+        if (conversation.length > MAX_CONVERSATION_LENGTH * 2) {
+          console.log(chalk.yellow('Conversation is getting long. Auto-compacting...'));
+          compactConversationHistory();
+        }
       } catch (error) {
         // Clear the thinking indicator
         readline.clearLine(process.stdout, 0);
@@ -249,24 +360,29 @@ export async function startRepl(): Promise<void> {
     process.exit(0);
   });
 
-  // Function to handle graceful shutdown
+  // Setup cleanup function for graceful exit
   function cleanup(): void {
-    console.log(chalk.yellow('\nShutting down REPL...'));
-
-    // Save conversation history
-    fs.writeFileSync(historyFile, history.join('\n'), 'utf8');
-
-    // Save permissions
     savePermissionConfig();
-
-    // Clean up resources
-    closePrompt();
-
-    console.log(chalk.green('Session data saved. Goodbye!'));
-    process.exit(0);
+    cleanupPermissionConfig();
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
   }
 
-  // Register cleanup handlers
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+  // Handle graceful exit
+  process.on('SIGINT', () => {
+    cleanup();
+    console.log(chalk.yellow('\nBye!'));
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', () => {
+    cleanup();
+    console.log(chalk.yellow('\nTerminated!'));
+    process.exit(0);
+  });
+
+  process.on('exit', () => {
+    cleanup();
+  });
 }
