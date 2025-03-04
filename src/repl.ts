@@ -163,14 +163,14 @@ export async function startRepl(): Promise<void> {
     },
   });
 
-  // Enable keypress events
+  // Enable keypress events but only after readline interface is created
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
   }
   process.stdin.resume();
 
   // We need to use readline.emitKeypressEvents to handle arrow keys
-  readline.emitKeypressEvents(process.stdin);
+  readline.emitKeypressEvents(process.stdin, rl); // Pass rl as the second argument
 
   console.log(
     chalk[successColor]('Welcome to forq CLI!'),
@@ -179,20 +179,22 @@ export async function startRepl(): Promise<void> {
   rl.prompt();
 
   // Handle history navigation and input processing
+  // We need to modify the keypress handler to not duplicate characters
   process.stdin.on('keypress', (_, key) => {
     if (!key) return;
 
+    // Only handle special keys (up/down) in the keypress handler
+    // Let the readline interface handle regular character input
     if (key.name === 'up' && historyIndex > 0) {
       if (historyIndex === history.length) {
         currentInput = rl.line;
       }
       historyIndex--;
-      // Clear current line
+      // Clear current line and restore from history
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-
-      // Write the prompt and historical command
-      process.stdout.write(chalk[promptColor](promptStyle) + history[historyIndex]);
+      rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
+      rl.write(history[historyIndex]); // Write the history entry
     } else if (key.name === 'down') {
       // Clear current line
       readline.clearLine(process.stdout, 0);
@@ -200,15 +202,17 @@ export async function startRepl(): Promise<void> {
 
       if (historyIndex < history.length - 1) {
         historyIndex++;
-        // Write the prompt and historical command
-        process.stdout.write(chalk[promptColor](promptStyle) + history[historyIndex]);
+        // Set the line content from history
+        rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
+        rl.write(history[historyIndex]); // Write the history entry
       } else if (historyIndex === history.length - 1) {
         historyIndex = history.length;
-        // Write the prompt and current input
-        process.stdout.write(chalk[promptColor](promptStyle) + currentInput);
+        // Restore current input
+        rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
+        rl.write(currentInput); // Write the saved current input
       } else {
         // Just rewrite the prompt
-        process.stdout.write(chalk[promptColor](promptStyle));
+        rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
       }
     }
   });

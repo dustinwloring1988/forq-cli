@@ -25,3 +25,7 @@
 - Created forq log CLI command to review session actions and logs
 - Added detailed diff generation for file modifications to track all changes transparently
 - Completed the Testing & Quality Assurance section by configuring Jest, adding initial tests for CLI and tools, and setting up GitHub Actions CI pipeline.
+
+## 2024-03-05
+
+- Fixed character duplication bug in REPL by properly integrating readline interface with keypress events.
