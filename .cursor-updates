@@ -12,3 +12,4 @@
 
 - Implemented file system tools (listDir, readFile, editFile, deleteFile, createFile) with error handling and security checks.
 - Implemented search tools (fileSearch, ripgrepSearch) with fuzzy filename matching and regex-based content search.
+- Implemented semantic tools (semanticEmbed, semanticSearch, readSemanticSearchFiles) with stub embedding function for semantic code searches.
