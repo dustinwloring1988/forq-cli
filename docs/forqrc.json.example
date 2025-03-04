@@ -1,0 +1,44 @@
+{
+  "api": {
+    "anthropic": {
+      "model": "claude-3-opus-20240229",
+      "maxTokens": 4000,
+      "temperature": 0.7
+    }
+  },
+  "tools": {
+    "semanticSearch": {
+      "enabled": true,
+      "requireConfirmation": false,
+      "settings": {
+        "maxResults": 5
+      }
+    },
+    "bash": {
+      "enabled": true,
+      "requireConfirmation": true,
+      "settings": {
+        "timeoutMs": 120000,
+        "bannedCommands": ["rm -rf", "sudo"]
+      }
+    }
+  },
+  "repl": {
+    "historySize": 100,
+    "prompt": "forq> ",
+    "colorScheme": {
+      "prompt": "blue",
+      "response": "green",
+      "error": "red",
+      "info": "yellow",
+      "success": "green"
+    },
+    "autoCompactThreshold": 40
+  },
+  "logging": {
+    "level": "info",
+    "logConversation": true,
+    "logToolCalls": true,
+    "logPerformance": false
+  }
+} 

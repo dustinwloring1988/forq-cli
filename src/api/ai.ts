@@ -24,6 +24,24 @@ const anthropic = new Anthropic({
 });
 
 /**
+ * Configuration options for AI requests
+ */
+export interface AIOptions {
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+/**
+ * Default AI configuration
+ */
+const DEFAULT_AI_OPTIONS: AIOptions = {
+  model: 'claude-3-opus-20240229',
+  maxTokens: 4000,
+  temperature: 0.7,
+};
+
+/**
  * Convert our internal message format to Anthropic's format
  */
 function convertToAnthropicMessages(messages: ForqMessage[]): Anthropic.MessageParam[] {
@@ -46,16 +64,24 @@ function extractSystemMessage(messages: ForqMessage[]): string | undefined {
 /**
  * Query the AI with a series of messages
  * @param messages Array of messages to send to the AI
+ * @param options Optional configuration options
  * @returns Promise resolving to the AI's response text
  */
-export async function queryAI(messages: ForqMessage[]): Promise<string> {
+export async function queryAI(messages: ForqMessage[], options?: AIOptions): Promise<string> {
   try {
     const anthropicMessages = convertToAnthropicMessages(messages);
     const systemPrompt = extractSystemMessage(messages);
 
+    // Merge default options with provided options
+    const mergedOptions = {
+      ...DEFAULT_AI_OPTIONS,
+      ...options,
+    };
+
     const response = await anthropic.messages.create({
-      model: 'claude-3-opus-20240229',
-      max_tokens: 4000,
+      model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
+      max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
+      temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
     });
@@ -82,19 +108,28 @@ export async function queryAI(messages: ForqMessage[]): Promise<string> {
  * @param messages Array of messages to send to the AI
  * @param onChunk Callback function to process each chunk of the response
  * @param onComplete Callback function called when the response is complete
+ * @param options Optional configuration options
  */
 export async function streamAI(
   messages: ForqMessage[],
   onChunk: (text: string) => void,
   onComplete?: (fullText: string) => void,
+  options?: AIOptions,
 ): Promise<void> {
   try {
     const anthropicMessages = convertToAnthropicMessages(messages);
     const systemPrompt = extractSystemMessage(messages);
 
+    // Merge default options with provided options
+    const mergedOptions = {
+      ...DEFAULT_AI_OPTIONS,
+      ...options,
+    };
+
     const stream = await anthropic.messages.create({
-      model: 'claude-3-7-sonnet-20250219',
-      max_tokens: 8192,
+      model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
+      max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
+      temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
       stream: true,

@@ -24,6 +24,7 @@ import {
   collectGitContext,
   getDirectoryStructureSummary,
 } from './utils/context';
+import { getConfig, initializeConfig, ForqConfig } from './utils/config';
 
 // Maximum number of messages to keep in history before compacting
 const MAX_CONVERSATION_LENGTH = 20;
@@ -33,6 +34,9 @@ const MAX_CONVERSATION_LENGTH = 20;
  * Handles user input and interacts with AI
  */
 export async function startRepl(): Promise<void> {
+  // Initialize configuration
+  const config = initializeConfig();
+
   // Load available tools
   await loadTools();
   console.log(
@@ -129,13 +133,27 @@ export async function startRepl(): Promise<void> {
   // Initialize conversation with enhanced system prompt
   const conversation: Message[] = [enhancedSystemPrompt];
 
+  // Apply configuration for readline
+  const historySize = config.repl?.historySize || 100;
+  const promptStyle = config.repl?.prompt || 'forq> ';
+
+  // Apply color scheme if configured
+  const promptColor = config.repl?.colorScheme?.prompt || 'blue';
+  const responseColor = config.repl?.colorScheme?.response || 'green';
+  const errorColor = config.repl?.colorScheme?.error || 'red';
+  const infoColor = config.repl?.colorScheme?.info || 'yellow';
+  const successColor = config.repl?.colorScheme?.success || 'green';
+
+  // Get auto-compact threshold from config or use default
+  const autoCompactThreshold = config.repl?.autoCompactThreshold || MAX_CONVERSATION_LENGTH * 2;
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.blue('forq> '),
-    historySize: 100,
+    prompt: chalk[promptColor](promptStyle),
+    historySize: historySize,
     completer: (line: string) => {
-      const completions = ['/help', '/clear', '/exit', '/reset', '/tools', '/compact'];
+      const completions = ['/help', '/clear', '/exit', '/reset', '/tools', '/compact', '/config'];
       const hits = completions.filter((c) => c.startsWith(line));
       return [hits.length ? hits : completions, line];
     },
@@ -151,8 +169,8 @@ export async function startRepl(): Promise<void> {
   readline.emitKeypressEvents(process.stdin);
 
   console.log(
-    chalk.green('Welcome to forq CLI!'),
-    chalk.yellow('Type /help for available commands.'),
+    chalk[successColor]('Welcome to forq CLI!'),
+    chalk[infoColor]('Type /help for available commands.'),
   );
   rl.prompt();
 
@@ -170,7 +188,7 @@ export async function startRepl(): Promise<void> {
       readline.cursorTo(process.stdout, 0);
 
       // Write the prompt and historical command
-      process.stdout.write(chalk.blue('forq> ') + history[historyIndex]);
+      process.stdout.write(chalk[promptColor](promptStyle) + history[historyIndex]);
     } else if (key.name === 'down') {
       // Clear current line
       readline.clearLine(process.stdout, 0);
@@ -179,14 +197,14 @@ export async function startRepl(): Promise<void> {
       if (historyIndex < history.length - 1) {
         historyIndex++;
         // Write the prompt and historical command
-        process.stdout.write(chalk.blue('forq> ') + history[historyIndex]);
+        process.stdout.write(chalk[promptColor](promptStyle) + history[historyIndex]);
       } else if (historyIndex === history.length - 1) {
         historyIndex = history.length;
         // Write the prompt and current input
-        process.stdout.write(chalk.blue('forq> ') + currentInput);
+        process.stdout.write(chalk[promptColor](promptStyle) + currentInput);
       } else {
         // Just rewrite the prompt
-        process.stdout.write(chalk.blue('forq> '));
+        process.stdout.write(chalk[promptColor](promptStyle));
       }
     }
   });
@@ -197,7 +215,7 @@ export async function startRepl(): Promise<void> {
    */
   function compactConversationHistory(): void {
     if (conversation.length <= 2) {
-      console.log(chalk.yellow('Conversation too short to compact.'));
+      console.log(chalk[infoColor]('Conversation too short to compact.'));
       return;
     }
 
@@ -206,7 +224,7 @@ export async function startRepl(): Promise<void> {
 
     // If conversation is already small, don't compact
     if (conversation.length <= MAX_CONVERSATION_LENGTH) {
-      console.log(chalk.yellow('Conversation already compact.'));
+      console.log(chalk[infoColor]('Conversation already compact.'));
       return;
     }
 
@@ -236,10 +254,37 @@ export async function startRepl(): Promise<void> {
     messagesToKeep.forEach((msg) => conversation.push(msg));
 
     console.log(
-      chalk.green(
+      chalk[successColor](
         `Compacted conversation history. Summarized ${messagesToSummarize.length} messages.`,
       ),
     );
+  }
+
+  /**
+   * Displays REPL configuration status
+   */
+  function displayConfig(): void {
+    const currentConfig = getConfig();
+    console.log(chalk[infoColor]('Current REPL Configuration:'));
+
+    console.log(chalk[infoColor]('API Settings:'));
+    console.log(`  Model: ${currentConfig.api?.anthropic?.model || 'default'}`);
+    console.log(`  Max Tokens: ${currentConfig.api?.anthropic?.maxTokens || 'default'}`);
+    console.log(`  Temperature: ${currentConfig.api?.anthropic?.temperature || 'default'}`);
+
+    console.log(chalk[infoColor]('REPL Settings:'));
+    console.log(`  History Size: ${currentConfig.repl?.historySize || 'default'}`);
+    console.log(
+      `  Auto-Compact Threshold: ${currentConfig.repl?.autoCompactThreshold || 'default'}`,
+    );
+
+    console.log(chalk[infoColor]('Logging Settings:'));
+    console.log(`  Log Level: ${currentConfig.logging?.level || 'default'}`);
+    console.log(`  Log Conversation: ${currentConfig.logging?.logConversation ? 'Yes' : 'No'}`);
+    console.log(`  Log Tool Calls: ${currentConfig.logging?.logToolCalls ? 'Yes' : 'No'}`);
+
+    console.log(chalk[infoColor]('\nTo modify settings, use the config command:'));
+    console.log(`  forq config --help`);
   }
 
   rl.on('line', async (line) => {
@@ -254,13 +299,14 @@ export async function startRepl(): Promise<void> {
 
     // Handle basic REPL commands
     if (trimmedLine === '/help') {
-      console.log(chalk.yellow('Available commands:'));
+      console.log(chalk[infoColor]('Available commands:'));
       console.log(chalk.cyan('/help') + ' - Display this help message');
       console.log(chalk.cyan('/clear') + ' - Clear the console');
       console.log(chalk.cyan('/exit') + ' - Exit the REPL');
       console.log(chalk.cyan('/reset') + ' - Reset the conversation');
       console.log(chalk.cyan('/tools') + ' - List available tools');
       console.log(chalk.cyan('/compact') + ' - Compact conversation history to reduce token usage');
+      console.log(chalk.cyan('/config') + ' - Display current configuration');
     } else if (trimmedLine === '/clear') {
       console.clear();
     } else if (trimmedLine === '/exit') {
@@ -271,14 +317,16 @@ export async function startRepl(): Promise<void> {
       return;
     } else if (trimmedLine === '/reset') {
       conversation.length = 1; // Keep only the system prompt
-      console.log(chalk.yellow('Conversation reset.'));
+      console.log(chalk[infoColor]('Conversation reset.'));
     } else if (trimmedLine === '/tools') {
-      console.log(chalk.yellow('Available tools:'));
+      console.log(chalk[infoColor]('Available tools:'));
       getAllTools().forEach((tool) => {
         console.log(chalk.cyan(tool.name) + ' - ' + tool.description);
       });
     } else if (trimmedLine === '/compact') {
       compactConversationHistory();
+    } else if (trimmedLine === '/config') {
+      displayConfig();
     } else if (trimmedLine) {
       // Create user message
       const userMessage: Message = {
@@ -296,8 +344,15 @@ export async function startRepl(): Promise<void> {
       process.stdout.write(chalk.gray('Thinking... '));
 
       try {
+        // Get config values for API call
+        const apiConfig = getConfig().api?.anthropic;
+
         // Get AI response
-        const aiResponse = await queryAI(conversation);
+        const aiResponse = await queryAI(conversation, {
+          model: apiConfig?.model,
+          maxTokens: apiConfig?.maxTokens,
+          temperature: apiConfig?.temperature,
+        });
 
         // Clear the thinking indicator
         readline.clearLine(process.stdout, 0);
@@ -308,7 +363,7 @@ export async function startRepl(): Promise<void> {
 
         // Process tool calls if any
         if (toolCalls.length > 0) {
-          console.log(chalk.green('AI: ') + aiResponse);
+          console.log(chalk[responseColor]('AI: ') + aiResponse);
 
           // Execute each tool call
           for (const toolCall of toolCalls) {
@@ -318,19 +373,19 @@ export async function startRepl(): Promise<void> {
               const result = await executeTool(toolCall, toolContext);
 
               if (result.success) {
-                console.log(chalk.green('Tool execution successful:'));
+                console.log(chalk[successColor]('Tool execution successful:'));
                 console.log(JSON.stringify(result.result, null, 2));
               } else {
-                console.log(chalk.red('Tool execution failed:'));
+                console.log(chalk[errorColor]('Tool execution failed:'));
                 console.log(result.error);
               }
             } catch (error) {
-              console.error(chalk.red('Error executing tool: ') + (error as Error).message);
+              console.error(chalk[errorColor]('Error executing tool: ') + (error as Error).message);
             }
           }
         } else {
           // Just display the normal response
-          console.log(chalk.green('AI: ') + aiResponse);
+          console.log(chalk[responseColor]('AI: ') + aiResponse);
         }
 
         // Add AI response to conversation
@@ -340,8 +395,8 @@ export async function startRepl(): Promise<void> {
         });
 
         // Auto-compact if conversation is getting too long
-        if (conversation.length > MAX_CONVERSATION_LENGTH * 2) {
-          console.log(chalk.yellow('Conversation is getting long. Auto-compacting...'));
+        if (conversation.length > autoCompactThreshold) {
+          console.log(chalk[infoColor]('Conversation is getting long. Auto-compacting...'));
           compactConversationHistory();
         }
       } catch (error) {
@@ -349,14 +404,14 @@ export async function startRepl(): Promise<void> {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
 
-        console.error(chalk.red('Error: ') + (error as Error).message);
+        console.error(chalk[errorColor]('Error: ') + (error as Error).message);
         logger.logError(error as Error, 'REPL Error');
       }
     }
 
     rl.prompt();
   }).on('close', () => {
-    console.log(chalk.yellow('Goodbye!'));
+    console.log(chalk[infoColor]('Goodbye!'));
     process.exit(0);
   });
 
@@ -372,13 +427,13 @@ export async function startRepl(): Promise<void> {
   // Handle graceful exit
   process.on('SIGINT', () => {
     cleanup();
-    console.log(chalk.yellow('\nBye!'));
+    console.log(chalk[infoColor]('\nBye!'));
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     cleanup();
-    console.log(chalk.yellow('\nTerminated!'));
+    console.log(chalk[infoColor]('\nTerminated!'));
     process.exit(0);
   });
 
