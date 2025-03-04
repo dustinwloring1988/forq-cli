@@ -1,0 +1,188 @@
+[
+  {
+    "name": "listDir",
+    "description": "Lists files and subdirectories within a given directory. This tool is used to retrieve the names of all files and directories in the specified path, helping the agent understand the project structure. It uses Node.js's synchronous fs.readdirSync method to perform the operation. In case of errors such as invalid paths or permission issues, the tool provides a detailed error message indicating the cause of the failure.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "dirPath": {
+          "type": "string",
+          "description": "The absolute or relative path of the directory to list. This should be a valid path accessible by the system."
+        }
+      },
+      "required": ["dirPath"]
+    }
+  },
+  {
+    "name": "readFile",
+    "description": "Reads and returns the content of a specified file securely. This tool fetches file content as a UTF-8 encoded string using Node.js's fs.readFileSync method. It is designed to safely retrieve file content for analysis or display. Detailed error handling is incorporated to catch issues like file not found or insufficient permissions, ensuring that the agent receives clear error messages when a file cannot be read.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filePath": {
+          "type": "string",
+          "description": "The absolute or relative path to the file that needs to be read."
+        }
+      },
+      "required": ["filePath"]
+    }
+  },
+  {
+    "name": "editFile",
+    "description": "Overwrites the content of an existing file with new content. This tool uses Node.js's fs.writeFileSync method to update the file synchronously in UTF-8 encoding. Although the tool is described to perform diff verification before applying changes, the current implementation directly overwrites the file content. It includes robust error handling to catch and report issues such as permission errors or non-existent files, ensuring that the user is informed of any failure during the edit process.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filePath": {
+          "type": "string",
+          "description": "The absolute or relative path of the file to be edited."
+        },
+        "newContent": {
+          "type": "string",
+          "description": "The new content that will replace the existing file content. In an extended implementation, a diff verification process can be applied before this overwrite."
+        }
+      },
+      "required": ["filePath", "newContent"]
+    }
+  },
+  {
+    "name": "deleteFile",
+    "description": "Safely deletes a specified file from the filesystem. This tool uses Node.js's fs.unlinkSync method to remove the file. It is designed with safety in mind, typically requiring a confirmation prompt (implemented here as a boolean flag) to prevent accidental deletions. Detailed error messages are provided if the file cannot be deleted due to reasons such as the file not existing or insufficient permissions.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filePath": {
+          "type": "string",
+          "description": "The absolute or relative path of the file to be deleted."
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "A confirmation flag that must be set to true to proceed with deletion. This helps avoid accidental file removals."
+        }
+      },
+      "required": ["filePath", "confirm"]
+    }
+  },
+  {
+    "name": "createFile",
+    "description": "Creates a new file with specified content while ensuring that an existing file is not overwritten. The tool first ensures that the target directory exists by using fs.mkdirSync with the recursive flag. It then checks for file existence using fs.existsSync and proceeds to create the file using fs.writeFileSync with a flag to prevent overwrites. If the file already exists, a descriptive error is returned. This ensures safe file creation and prevents accidental data loss.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filePath": {
+          "type": "string",
+          "description": "The absolute or relative path where the new file should be created."
+        },
+        "content": {
+          "type": "string",
+          "description": "The content to be written to the new file."
+        }
+      },
+      "required": ["filePath", "content"]
+    }
+  },
+  {
+    "name": "fileSearch",
+    "description": "Performs a fuzzy match search for filenames across directories starting from a specified root directory. This tool recursively traverses the filesystem, matching file names against the provided query in a case-insensitive manner. It is useful when the exact filename is not known, returning a list of potential matches. The tool is designed to gracefully handle errors such as inaccessible directories and continues the search even if some paths cannot be read.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The query string to be matched against filenames using fuzzy, case-insensitive matching."
+        },
+        "rootDir": {
+          "type": "string",
+          "description": "The root directory from which the search should begin. If not specified, it defaults to the current directory ('.')."
+        }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "ripgrepSearch",
+    "description": "Performs a regex-based content search using ripgrep. This tool constructs and executes a ripgrep command to search through files within a specified directory for lines that match the provided regex pattern. It returns an array of matching lines that include line numbers and file paths. The tool is designed to handle errors gracefully, returning an empty array if no matches are found or if an error occurs during command execution.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "The regular expression pattern to search for within file contents."
+        },
+        "rootDir": {
+          "type": "string",
+          "description": "The directory in which to perform the search. Defaults to '.' if not specified."
+        }
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
+    "name": "semanticEmbed",
+    "description": "Converts input text into a semantic embedding vector. This stub function is the basis for more advanced semantic search operations. In a complete implementation, it would interface with a machine learning model or external API to generate a high-dimensional vector that captures the semantic meaning of the text. This embedding vector can later be used to compare similarity between different pieces of text or code.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The text to be converted into an embedding vector for semantic analysis."
+        }
+      },
+      "required": ["text"]
+    }
+  },
+  {
+    "name": "semanticSearch",
+    "description": "Returns semantically relevant code snippets based on a natural language query. This tool first converts the query into an embedding vector using the semanticEmbed mechanism, then searches a pre-built index of code embeddings to find the most relevant results. It returns an array of objects containing file paths, code snippets, and similarity scores. The semantic search enhances traditional text search by understanding the underlying meaning of the query, which is particularly useful for code discovery and refactoring tasks.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The natural language query to find semantically relevant code snippets."
+        },
+        "codebase": {
+          "type": "string",
+          "description": "The identifier or path of the codebase within which to perform the semantic search."
+        },
+        "topK": {
+          "type": "number",
+          "description": "The number of top results to return. If not provided, the default is 5."
+        }
+      },
+      "required": ["query", "codebase"]
+    }
+  },
+  {
+    "name": "readSemanticSearchFiles",
+    "description": "Retrieves the full content of files that are the top semantic matches for a given query. This tool first performs a semantic search to identify the most relevant files based on their embedding similarity to the query, then reads and returns the complete content of those files. It minimizes round trips by combining the search and file retrieval processes, providing comprehensive context from multiple files in one operation.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The natural language query used to identify semantically relevant files."
+        },
+        "topK": {
+          "type": "number",
+          "description": "The number of top matching files to retrieve. Defaults to 2 if not specified."
+        }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "bash",
+    "description": "Run commands in a bash shell\n* When invoking this tool, the contents of the \"command\" parameter does NOT need to be XML-escaped.\n* You don't have access to the internet via this tool.\n* You do have access to a mirror of common linux and python packages via apt and pip.\n* State is persistent across command calls and discussions with the user.\n* To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.\n* Please avoid commands that may produce a very large amount of output.\n\* Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "The bash command to run. This should be a valid shell command that the system can execute."
+        }
+      },
+      "required": ["command"]
+    }
+  }
+]

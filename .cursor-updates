@@ -4,4 +4,5 @@
 - Created interactive REPL implementation with readline, supporting basic commands (/help, /clear, /exit).
 - Enhanced REPL with command history navigation using arrow keys and colorful prompt using chalk.
 - Added npm script for easy REPL access: `npm run repl`.
-- Implemented System Prompt and User Prompt Management with config/systemPrompt.ts, AI API integration, and conversation history logging. 
+- Implemented System Prompt and User Prompt Management with config/systemPrompt.ts, AI API integration, and conversation history logging.
+- Implemented Tool System core with Tool interface, dynamic tool loading, tool execution, and AI integration. Added echo and listDir tools for testing.

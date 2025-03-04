@@ -17,9 +17,14 @@ program.name('forq').description('Terminal-based AI Coding Agent').version(packa
 program
   .command('repl')
   .description('Start an interactive REPL session')
-  .action(() => {
+  .action(async () => {
     console.log('Starting REPL session...');
-    startRepl();
+    try {
+      await startRepl();
+    } catch (error) {
+      console.error('Error starting REPL:', (error as Error).message);
+      process.exit(1);
+    }
   });
 
 // Parse command line arguments
