@@ -22,6 +22,96 @@ const program = new Command();
 
 program.name('forq').description('Terminal-based AI Coding Agent').version(packageJson.version);
 
+// Help content for each command
+const helpContent: Record<string, string> = {
+  repl: `
+DESCRIPTION
+  Start an interactive REPL (Read-Eval-Print Loop) session with Forq.
+  
+  The REPL provides an interactive environment where you can communicate with 
+  the AI assistant to help with various coding tasks.
+
+USAGE
+  $ forq repl
+
+SPECIAL COMMANDS
+  /help    - Show available REPL commands
+  /clear   - Clear the conversation history
+  /exit    - Exit the REPL session
+  /compact - Compact conversation history to save tokens
+
+EXAMPLES
+  $ forq repl
+  > Analyze the current project structure
+  > Help me fix the bug in src/utils/parser.ts
+  > Create a new React component for user profile
+`,
+
+  log: `
+DESCRIPTION
+  View logs from the application.
+
+USAGE
+  $ forq log [OPTIONS]
+
+OPTIONS
+  -t, --type <type>    Type of log to view. Options: actions, error, conversation, analytics
+                       Default: actions
+  -n, --lines <number> Number of lines to display
+                       Default: 20
+  -a, --all            Show all log entries
+
+EXAMPLES
+  $ forq log
+  $ forq log --type error
+  $ forq log --type conversation --lines 50
+  $ forq log --type analytics --all
+`,
+
+  config: `
+DESCRIPTION
+  View and edit configuration settings.
+
+USAGE
+  $ forq config [OPTIONS]
+
+OPTIONS
+  -g, --global         Use global configuration (~/.forqrc.json)
+  -p, --project        Use project-specific configuration (.forqrc.json)
+  -i, --init           Initialize a default configuration file
+  -k, --key <key>      Configuration key to get or set (dot notation)
+  -v, --value <value>  Value to set for the key (JSON format)
+  -d, --delete         Delete the specified key
+
+EXAMPLES
+  $ forq config --global --init
+  $ forq config --global
+  $ forq config --project --key apiKeys.anthropic --value "your-api-key"
+  $ forq config --global --key preferences.theme --delete
+`,
+};
+
+// Function to display detailed help for a command
+function displayDetailedHelp(command: string): void {
+  if (helpContent[command]) {
+    console.log(helpContent[command]);
+  } else {
+    console.log(`No detailed help available for '${command}'. Try 'forq --help' for general help.`);
+  }
+}
+
+// Implement the help command
+program
+  .command('help [command]')
+  .description('Display detailed help for a specific command')
+  .action((command: string | undefined) => {
+    if (command) {
+      displayDetailedHelp(command);
+    } else {
+      program.outputHelp();
+    }
+  });
+
 // Implement the REPL command
 program
   .command('repl')

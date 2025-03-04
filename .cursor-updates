@@ -26,3 +26,4 @@
 - Added detailed diff generation for file modifications to track all changes transparently
 - Completed the Testing & Quality Assurance section by configuring Jest, adding initial tests for CLI and tools, and setting up GitHub Actions CI pipeline.
 - Fixed character duplication bug in REPL by implementing a new inquirer-based REPL instead of using raw mode and keypress event handling.
+- Completed the Documentation & User Onboarding story with README, CLI commands documentation, prompt guidelines, example workflows, and detailed help command implementation.
