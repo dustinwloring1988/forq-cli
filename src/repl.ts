@@ -163,21 +163,20 @@ export async function startRepl(): Promise<void> {
     },
   });
 
+  // We're going to use the built-in readline history functionality instead of raw mode
+  // This avoids the character duplication issue
+
   console.log(
     chalk[successColor]('Welcome to forq CLI!'),
     chalk[infoColor]('Type /help for available commands.'),
   );
   rl.prompt();
 
-  // Load the command history into readline
-  // We need to use a hacky approach since the TypeScript types don't expose history
-  // But the Node.js readline does have history functionality
-  for (const cmd of history) {
-    // This is a workaround to add history items
-    // The readline interface has history but it's not in the TypeScript types
-    (rl as any)._refreshLine();
-    (rl as any).history = history;
-    (rl as any).historyIndex = history.length;
+  // Add the command history to readline
+  if (history.length > 0) {
+    // Note: Directly manipulating readline history is not officially supported,
+    // but it works for the Node.js readline implementation
+    (rl as any).history = [...history].reverse();
   }
 
   /**
@@ -270,7 +269,10 @@ export async function startRepl(): Promise<void> {
     if (trimmedLine && (history.length === 0 || history[history.length - 1] !== trimmedLine)) {
       history.push(trimmedLine);
       fs.writeFileSync(historyFile, history.join('\n') + '\n');
-      historyIndex = history.length;
+      // Also update the readline history
+      if ((rl as any).history) {
+        (rl as any).history.unshift(trimmedLine);
+      }
     }
 
     // Handle basic REPL commands
@@ -286,6 +288,9 @@ export async function startRepl(): Promise<void> {
     } else if (trimmedLine === '/clear') {
       console.clear();
     } else if (trimmedLine === '/exit') {
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
       rl.close();
       return;
     } else if (trimmedLine === '/reset') {
@@ -409,20 +414,10 @@ export async function startRepl(): Promise<void> {
     cleanupPermissionConfig();
   }
 
-  // Handle graceful exit
+  // Register cleanup handlers
+  process.on('exit', cleanup);
   process.on('SIGINT', () => {
-    cleanup();
-    console.log(chalk[infoColor]('\nBye!'));
+    console.log(chalk[infoColor]('\nReceived SIGINT. Cleaning up...'));
     process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    cleanup();
-    console.log(chalk[infoColor]('\nTerminated!'));
-    process.exit(0);
-  });
-
-  process.on('exit', () => {
-    cleanup();
   });
 }
