@@ -13,6 +13,14 @@
         "granted": true,
         "timestamp": 1741123004505
       }
+    ],
+    "createFile": [
+      {
+        "type": "file_system",
+        "granted": true,
+        "scope": "test.txt",
+        "timestamp": 1741131852486
+      }
     ]
   }
 }

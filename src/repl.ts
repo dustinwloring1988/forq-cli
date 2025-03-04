@@ -395,61 +395,67 @@ export async function startRepl(): Promise<void> {
                   if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
                     console.log(chalk[infoColor]('Sending tool result back to Claude...'));
 
+                    // IMPORTANT: We use a non-blocking pattern here to avoid hanging the REPL.
+                    // Tool result processing and the final Claude response will happen asynchronously
+                    // while the REPL continues to be responsive to user input.
+                    // This means the final Claude response will appear after the next prompt.
+
                     // Import the sendToolResultToAI function from the AI API
                     const { sendToolResultToAI } = await import('./api/ai.js');
 
-                    try {
-                      // Create a specialized conversation copy with the right format
-                      const specialConversation: any[] = [];
+                    // Create a specialized conversation copy with the right format
+                    const specialConversation: any[] = [];
 
-                      // First, add all messages up to but not including the last assistant message
-                      for (let i = 0; i < conversation.length - 1; i++) {
-                        specialConversation.push({
-                          role: conversation[i].role,
-                          content: conversation[i].content,
-                        });
-                      }
-
-                      // Add the last assistant message with tool_use content
+                    // First, add all messages up to but not including the last assistant message
+                    for (let i = 0; i < conversation.length - 1; i++) {
                       specialConversation.push({
-                        role: 'assistant',
-                        content: response.toolCalls.map((call) => ({
-                          type: 'tool_use',
-                          id: response.toolUseId,
-                          name: call.name,
-                          input: call.parameters,
-                        })),
+                        role: conversation[i].role,
+                        content: conversation[i].content,
                       });
-
-                      // Send the tool result back to Claude using the specialized conversation
-                      const finalResponse = await sendToolResultToAI(
-                        specialConversation as any,
-                        result,
-                        response.toolUseId,
-                        {},
-                      );
-
-                      // Process the final response
-                      if (finalResponse) {
-                        // Print the response
-                        console.log('\n' + chalk[responseColor](finalResponse.text));
-
-                        // Add the final response to the conversation
-                        conversation.push({
-                          role: 'assistant',
-                          content: finalResponse.text,
-                        });
-
-                        // Log the final response
-                        logger.logConversation(`AI (final): ${finalResponse.text}`);
-                      }
-                    } catch (toolResultError) {
-                      console.error(
-                        chalk[errorColor](
-                          `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
-                        ),
-                      );
                     }
+
+                    // Add the last assistant message with tool_use content
+                    specialConversation.push({
+                      role: 'assistant',
+                      content: response.toolCalls.map((call) => ({
+                        type: 'tool_use',
+                        id: response.toolUseId,
+                        name: call.name,
+                        input: call.parameters,
+                      })),
+                    });
+
+                    // Send the tool result back to Claude using the specialized conversation
+                    // Note: We're deliberately not awaiting this call so that the REPL can continue
+                    sendToolResultToAI(specialConversation as any, result, response.toolUseId, {})
+                      .then((finalResponse) => {
+                        // Process the final response
+                        if (finalResponse) {
+                          // Print the response
+                          console.log('\n' + chalk[responseColor](finalResponse.text));
+
+                          // Add the final response to the conversation
+                          conversation.push({
+                            role: 'assistant',
+                            content: finalResponse.text,
+                          });
+
+                          // Log the final response
+                          logger.logConversation(`AI (final): ${finalResponse.text}`);
+
+                          // Print a new prompt after the response is added
+                          process.stdout.write(chalk[promptColor](promptStyle));
+                        }
+                      })
+                      .catch((toolResultError) => {
+                        console.error(
+                          chalk[errorColor](
+                            `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
+                          ),
+                        );
+                        // Print a new prompt after the error
+                        process.stdout.write(chalk[promptColor](promptStyle));
+                      });
                   }
                 } catch (error) {
                   const errorMessage = (error as Error).message;
@@ -466,6 +472,11 @@ export async function startRepl(): Promise<void> {
 
           // Add a newline after streaming completes
           console.log('');
+
+          // The streamAI handleComplete function might trigger async operations
+          // like sending tool results, but the main REPL loop doesn't wait for those.
+          // This is intentional - the tool result processing will happen in the background
+          // while the REPL returns to allow the user to continue.
         } catch (error) {
           console.error(chalk[errorColor](`Error: ${(error as Error).message}`));
           logger.logError((error as Error).message, 'REPL Error');

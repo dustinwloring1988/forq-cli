@@ -43,3 +43,4 @@
 - Fixed bugs in tool cycle implementation including proper error handling and message formatting.
 - Enhanced debugging capabilities for tool result processing with detailed logging.
 - Added message metadata support to correctly preserve original API responses.
+- Implemented non-blocking tool result processing to keep the REPL responsive when completing tool cycles.
