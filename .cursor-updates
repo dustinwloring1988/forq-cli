@@ -44,3 +44,7 @@
 - Enhanced debugging capabilities for tool result processing with detailed logging.
 - Added message metadata support to correctly preserve original API responses.
 - Implemented non-blocking tool result processing to keep the REPL responsive when completing tool cycles.
+
+## 2024-03-06
+
+- Fixed the deleteFile tool by removing the redundant confirm parameter and relying solely on the requiresPermission flag for user confirmation, making it consistent with other file operation tools.

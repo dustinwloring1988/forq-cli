@@ -21,12 +21,8 @@ export const tool: Tool = {
         description:
           'The path to the file that needs to be deleted (relative to current working directory)',
       },
-      confirm: {
-        type: 'boolean',
-        description: 'A confirmation flag that must be set to true to proceed with deletion',
-      },
     },
-    required: ['filePath', 'confirm'],
+    required: ['filePath'],
   },
   requiresPermission: true, // File deletion requires permission
   execute: async (parameters: ToolParameters, context: ToolContext): Promise<any> => {
@@ -45,21 +41,11 @@ export const tool: Tool = {
         throw new Error(`Path is not a file: ${resolvedPath}`);
       }
 
-      // Check confirmation
-      if (!parameters.confirm) {
-        return {
-          filePath: parameters.filePath,
-          message: 'Deletion cancelled: confirmation was not provided',
-          deleted: false,
-        };
-      }
-
       // Delete the file
       fs.unlinkSync(resolvedPath);
 
       context.logger.logAction('DeleteFile Tool', {
         filePath: parameters.filePath,
-        confirmed: parameters.confirm,
       });
 
       return {
