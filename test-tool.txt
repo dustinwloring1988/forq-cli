@@ -1,0 +1,1 @@
+<tool:echo>{"message": "Hello, tool system!"}</tool>

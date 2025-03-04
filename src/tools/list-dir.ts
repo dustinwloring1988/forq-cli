@@ -18,15 +18,18 @@ export const tool: Tool = {
     properties: {
       path: {
         type: 'string',
-        description: 'The path to list (relative to current working directory)',
+        description:
+          'The path to list (relative to current working directory), defaults to current directory if not provided',
       },
     },
-    required: ['path'],
+    // Make path optional
+    required: [],
   },
   requiresPermission: false,
   execute: async (parameters: ToolParameters, context: ToolContext): Promise<any> => {
     try {
-      const dirPath = path.resolve(context.cwd, parameters.path);
+      // Default to current working directory if path is not provided
+      const dirPath = path.resolve(context.cwd, parameters.path || '.');
 
       // Check if path exists
       if (!fs.existsSync(dirPath)) {
@@ -57,10 +60,10 @@ export const tool: Tool = {
         };
       });
 
-      context.logger.logAction('ListDir Tool', { path: parameters.path });
+      context.logger.logAction('ListDir Tool', { path: parameters.path || '.' });
 
       return {
-        path: parameters.path,
+        path: parameters.path || '.',
         items: itemDetails,
       };
     } catch (error) {

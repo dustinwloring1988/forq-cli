@@ -168,7 +168,12 @@ export function extractToolCalls(aiResponse: string): ToolCall[] {
     try {
       const name = match[1];
       const parametersJson = match[2].trim();
-      const parameters = JSON.parse(parametersJson);
+
+      // Handle empty parameters or empty string
+      let parameters = {};
+      if (parametersJson && parametersJson !== '') {
+        parameters = JSON.parse(parametersJson);
+      }
 
       toolCalls.push({
         name,
