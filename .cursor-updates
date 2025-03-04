@@ -28,4 +28,4 @@
 
 ## 2024-03-05
 
-- Fixed character duplication bug in REPL by properly integrating readline interface with keypress events.
+- Fixed character duplication bug in REPL by removing custom keypress handlers and using built-in readline functionality.

@@ -163,59 +163,22 @@ export async function startRepl(): Promise<void> {
     },
   });
 
-  // Enable keypress events but only after readline interface is created
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-
-  // We need to use readline.emitKeypressEvents to handle arrow keys
-  readline.emitKeypressEvents(process.stdin, rl); // Pass rl as the second argument
-
   console.log(
     chalk[successColor]('Welcome to forq CLI!'),
     chalk[infoColor]('Type /help for available commands.'),
   );
   rl.prompt();
 
-  // Handle history navigation and input processing
-  // We need to modify the keypress handler to not duplicate characters
-  process.stdin.on('keypress', (_, key) => {
-    if (!key) return;
-
-    // Only handle special keys (up/down) in the keypress handler
-    // Let the readline interface handle regular character input
-    if (key.name === 'up' && historyIndex > 0) {
-      if (historyIndex === history.length) {
-        currentInput = rl.line;
-      }
-      historyIndex--;
-      // Clear current line and restore from history
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
-      rl.write(history[historyIndex]); // Write the history entry
-    } else if (key.name === 'down') {
-      // Clear current line
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-
-      if (historyIndex < history.length - 1) {
-        historyIndex++;
-        // Set the line content from history
-        rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
-        rl.write(history[historyIndex]); // Write the history entry
-      } else if (historyIndex === history.length - 1) {
-        historyIndex = history.length;
-        // Restore current input
-        rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
-        rl.write(currentInput); // Write the saved current input
-      } else {
-        // Just rewrite the prompt
-        rl.write(null, { ctrl: true, name: 'u' }); // Clear the current line
-      }
-    }
-  });
+  // Load the command history into readline
+  // We need to use a hacky approach since the TypeScript types don't expose history
+  // But the Node.js readline does have history functionality
+  for (const cmd of history) {
+    // This is a workaround to add history items
+    // The readline interface has history but it's not in the TypeScript types
+    (rl as any)._refreshLine();
+    (rl as any).history = history;
+    (rl as any).historyIndex = history.length;
+  }
 
   /**
    * Compacts the conversation history to reduce token usage
@@ -323,9 +286,6 @@ export async function startRepl(): Promise<void> {
     } else if (trimmedLine === '/clear') {
       console.clear();
     } else if (trimmedLine === '/exit') {
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-      }
       rl.close();
       return;
     } else if (trimmedLine === '/reset') {
@@ -447,9 +407,6 @@ export async function startRepl(): Promise<void> {
     analytics.endSession();
     savePermissionConfig();
     cleanupPermissionConfig();
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-    }
   }
 
   // Handle graceful exit
