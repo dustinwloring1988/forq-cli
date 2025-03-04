@@ -27,4 +27,4 @@
 - Completed the Testing & Quality Assurance section by configuring Jest, adding initial tests for CLI and tools, and setting up GitHub Actions CI pipeline.
 - Fixed character duplication bug in REPL by implementing a new inquirer-based REPL instead of using raw mode and keypress event handling.
 - Completed the Documentation & User Onboarding story with README, CLI commands documentation, prompt guidelines, example workflows, and detailed help command implementation.
-- Fixed bug where user input was being duplicated in the REPL output by updating the logging approach.
+- Fixed AI response streaming by replacing queryAI with streamAI in the REPL loop to provide real-time response output instead of showing dots and then the complete response at once.

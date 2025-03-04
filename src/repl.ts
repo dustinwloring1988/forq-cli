@@ -293,7 +293,7 @@ export async function startRepl(): Promise<void> {
         // Add user message to conversation
         conversation.push(userMessage);
 
-        // Log user message but don't echo it to the console since inquirer already displayed it
+        // Log user message
         logger.logConversation(`User: ${trimmedLine}`);
 
         // Show thinking indicator
@@ -308,19 +308,32 @@ export async function startRepl(): Promise<void> {
           // Get API config values
           const apiConfig = config.api?.anthropic;
 
-          // Query AI
-          const aiResponse = await queryAI(conversation, {
-            maxTokens: apiConfig?.maxTokens,
-            temperature: apiConfig?.temperature,
-          });
-
-          // Clear thinking indicator
+          // Clear thinking indicator before we start streaming
           clearInterval(thinkingInterval);
           readline.clearLine(process.stdout, 0);
           readline.cursorTo(process.stdout, 0);
 
-          // Process AI response - queryAI returns a string directly
-          const responseContent = aiResponse;
+          // Use streamAI instead of queryAI to get streaming responses
+          let responseContent = '';
+          await streamAI(
+            conversation,
+            (chunk) => {
+              // Display each chunk as it arrives
+              process.stdout.write(chalk[responseColor](chunk));
+              responseContent += chunk;
+            },
+            (fullText) => {
+              // Called when streaming is complete
+              responseContent = fullText;
+            },
+            {
+              maxTokens: apiConfig?.maxTokens,
+              temperature: apiConfig?.temperature,
+            },
+          );
+
+          // Add a newline after streaming completes
+          console.log('');
 
           // Add assistant message to conversation
           conversation.push({
@@ -361,9 +374,6 @@ export async function startRepl(): Promise<void> {
               }
             }
           }
-
-          // Display the final response
-          console.log(chalk[responseColor](responseContent));
         } catch (error) {
           console.error(chalk[errorColor](`Error: ${(error as Error).message}`));
           logger.logError((error as Error).message, 'REPL Error');
