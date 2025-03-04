@@ -6,9 +6,14 @@ import * as os from 'os';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const chalk = require('chalk');
 
+import { Message } from './types/messages';
+import { loadSystemPrompt } from './config/systemPrompt';
+import { queryAI, streamAI } from './api/ai';
+import { logger } from './utils/logger';
+
 /**
  * Interactive REPL (Read-Eval-Print Loop) for the forq CLI
- * This will eventually handle user input and interact with AI
+ * Handles user input and interacts with AI
  */
 export function startRepl(): void {
   // Create history file directory if it doesn't exist
@@ -27,6 +32,12 @@ export function startRepl(): void {
 
   let historyIndex = history.length;
   let currentInput = '';
+
+  // Get system prompt
+  const systemPrompt = loadSystemPrompt();
+
+  // Initialize conversation with system prompt
+  const conversation: Message[] = [systemPrompt];
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -90,7 +101,7 @@ export function startRepl(): void {
     }
   });
 
-  rl.on('line', (line) => {
+  rl.on('line', async (line) => {
     const trimmedLine = line.trim();
 
     // Don't add empty lines or duplicates to history
@@ -106,6 +117,7 @@ export function startRepl(): void {
       console.log(chalk.cyan('/help') + ' - Display this help message');
       console.log(chalk.cyan('/clear') + ' - Clear the console');
       console.log(chalk.cyan('/exit') + ' - Exit the REPL');
+      console.log(chalk.cyan('/reset') + ' - Reset the conversation');
     } else if (trimmedLine === '/clear') {
       console.clear();
     } else if (trimmedLine === '/exit') {
@@ -114,9 +126,49 @@ export function startRepl(): void {
       }
       rl.close();
       return;
+    } else if (trimmedLine === '/reset') {
+      conversation.length = 1; // Keep only the system prompt
+      console.log(chalk.yellow('Conversation reset.'));
     } else if (trimmedLine) {
-      console.log(`You entered: ${chalk.green(trimmedLine)}`);
-      // TODO: Process input and send to AI
+      // Create user message
+      const userMessage: Message = {
+        role: 'user',
+        content: trimmedLine,
+      };
+
+      // Add user message to conversation
+      conversation.push(userMessage);
+
+      // Log user message
+      logger.logConversation(`User: ${trimmedLine}`);
+
+      // Show thinking indicator
+      process.stdout.write(chalk.gray('Thinking... '));
+
+      try {
+        // Get AI response
+        const aiResponse = await queryAI(conversation);
+
+        // Clear the thinking indicator
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+
+        // Display response
+        console.log(chalk.green('AI: ') + aiResponse);
+
+        // Add AI response to conversation
+        conversation.push({
+          role: 'assistant',
+          content: aiResponse,
+        });
+      } catch (error) {
+        // Clear the thinking indicator
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+
+        console.error(chalk.red('Error: ') + (error as Error).message);
+        logger.logError(error as Error, 'REPL Error');
+      }
     }
 
     rl.prompt();
