@@ -293,7 +293,7 @@ export async function startRepl(): Promise<void> {
         // Add user message to conversation
         conversation.push(userMessage);
 
-        // Log user message
+        // Log user message but don't echo it to the console since inquirer already displayed it
         logger.logConversation(`User: ${trimmedLine}`);
 
         // Show thinking indicator
