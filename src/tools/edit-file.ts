@@ -8,6 +8,40 @@ import * as path from 'path';
 import { Tool, ToolContext, ToolParameters } from '../types/tools';
 
 /**
+ * Generate a basic diff between old and new content
+ * @param oldContent The original file content
+ * @param newContent The new file content
+ * @returns A string showing the differences
+ */
+function generateDiff(oldContent: string, newContent: string): string {
+  const oldLines = oldContent.split('\n');
+  const newLines = newContent.split('\n');
+  const diff: string[] = [];
+
+  const maxLines = Math.max(oldLines.length, newLines.length);
+
+  for (let i = 0; i < maxLines; i++) {
+    const oldLine = i < oldLines.length ? oldLines[i] : null;
+    const newLine = i < newLines.length ? newLines[i] : null;
+
+    if (oldLine === newLine) {
+      // Line is unchanged
+      diff.push(`  ${oldLine}`);
+    } else {
+      // Line was changed
+      if (oldLine !== null) {
+        diff.push(`- ${oldLine}`);
+      }
+      if (newLine !== null) {
+        diff.push(`+ ${newLine}`);
+      }
+    }
+  }
+
+  return diff.join('\n');
+}
+
+/**
  * The editFile tool overwrites the content of an existing file with new content
  */
 export const tool: Tool = {
@@ -45,18 +79,21 @@ export const tool: Tool = {
         throw new Error(`Path is not a file: ${resolvedPath}`);
       }
 
-      // Read the existing content for potential diff checking/logging
+      // Read the existing content for diff checking/logging
       const oldContent = fs.readFileSync(resolvedPath, 'utf8');
 
-      // In a more sophisticated implementation, we would show a diff here
-      // and potentially ask for confirmation
+      // Generate a diff between old and new content
+      const diff = generateDiff(oldContent, parameters.newContent);
 
       // Write new content to file
       fs.writeFileSync(resolvedPath, parameters.newContent, 'utf8');
 
+      // Log the action with detailed information including the diff
       context.logger.logAction('EditFile Tool', {
         filePath: parameters.filePath,
         contentSizeBytes: parameters.newContent.length,
+        diffSummary: `${diff.split('\n').filter((line) => line.startsWith('+')).length} additions, ${diff.split('\n').filter((line) => line.startsWith('-')).length} deletions`,
+        diff: diff,
       });
 
       return {
@@ -64,6 +101,7 @@ export const tool: Tool = {
         message: 'File updated successfully',
         previousSizeBytes: oldContent.length,
         newSizeBytes: parameters.newContent.length,
+        diffSummary: `${diff.split('\n').filter((line) => line.startsWith('+')).length} additions, ${diff.split('\n').filter((line) => line.startsWith('-')).length} deletions`,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

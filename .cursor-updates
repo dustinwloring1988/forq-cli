@@ -17,3 +17,10 @@
 
 - Implemented file system tools (listDir, readFile, editFile, deleteFile, createFile) with error handling and security checks.
 - Implemented search tools (fileSearch, ripgrepSearch) with fuzzy filename matching and regex-based content search.
+
+## 2024-03-04
+
+- Implemented analytics module to track session metrics (duration, commands, tool usage)
+- Enhanced error logging with stack traces through logger.ts
+- Created forq log CLI command to review session actions and logs
+- Added detailed diff generation for file modifications to track all changes transparently

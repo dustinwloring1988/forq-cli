@@ -10,6 +10,7 @@ import { Message } from './types/messages';
 import { loadSystemPrompt } from './config/systemPrompt';
 import { queryAI, streamAI } from './api/ai';
 import { logger } from './utils/logger';
+import { analytics } from './utils/analytics';
 import { loadTools, extractToolCalls, executeTool, getAllTools, getToolsSchema } from './tools';
 import { ToolContext } from './types/tools';
 import {
@@ -36,6 +37,9 @@ const MAX_CONVERSATION_LENGTH = 20;
 export async function startRepl(): Promise<void> {
   // Initialize configuration
   const config = initializeConfig();
+
+  // Initialize analytics
+  analytics.initialize();
 
   // Load available tools
   await loadTools();
@@ -288,6 +292,11 @@ export async function startRepl(): Promise<void> {
   }
 
   rl.on('line', async (line) => {
+    // Track input as a command (if it's a special command)
+    if (line.startsWith('/')) {
+      analytics.trackCommand(line.split(' ')[0]);
+    }
+
     const trimmedLine = line.trim();
 
     // Don't add empty lines or duplicates to history
@@ -344,48 +353,61 @@ export async function startRepl(): Promise<void> {
       process.stdout.write(chalk.gray('Thinking... '));
 
       try {
-        // Get config values for API call
-        const apiConfig = getConfig().api?.anthropic;
+        // Show thinking indicator
+        const thinkingInterval = setInterval(() => {
+          process.stdout.write(chalk[infoColor]('.'));
+        }, 500);
 
-        // Get AI response
+        // Get API config values
+        const apiConfig = config.api?.anthropic;
+
+        // Query AI
         const aiResponse = await queryAI(conversation, {
-          model: apiConfig?.model,
           maxTokens: apiConfig?.maxTokens,
           temperature: apiConfig?.temperature,
         });
 
-        // Clear the thinking indicator
+        // Clear thinking indicator
+        clearInterval(thinkingInterval);
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
+
+        // Display AI response
+        console.log(chalk[responseColor]('AI: ') + aiResponse);
 
         // Extract tool calls from AI response
         const toolCalls = extractToolCalls(aiResponse);
 
         // Process tool calls if any
         if (toolCalls.length > 0) {
-          console.log(chalk[responseColor]('AI: ') + aiResponse);
-
-          // Execute each tool call
           for (const toolCall of toolCalls) {
             console.log(chalk.cyan(`Executing tool: ${toolCall.name}`));
 
             try {
+              // Track tool usage for analytics
+              analytics.trackToolUsage(toolCall.name);
+
+              // Execute the tool
               const result = await executeTool(toolCall, toolContext);
 
+              // Display tool result
               if (result.success) {
-                console.log(chalk[successColor]('Tool execution successful:'));
-                console.log(JSON.stringify(result.result, null, 2));
+                console.log(chalk.green(`Tool execution successful: ${toolCall.name}`));
+                if (result.result) {
+                  console.log(JSON.stringify(result.result, null, 2));
+                }
               } else {
-                console.log(chalk[errorColor]('Tool execution failed:'));
+                console.log(chalk.red(`Tool execution failed: ${toolCall.name}`));
                 console.log(result.error);
               }
-            } catch (error) {
-              console.error(chalk[errorColor]('Error executing tool: ') + (error as Error).message);
+            } catch (toolError) {
+              console.error(
+                chalk[errorColor](`Error executing tool ${toolCall.name}: `) +
+                  (toolError as Error).message,
+              );
+              logger.logError(toolError as Error, `Tool Execution Error: ${toolCall.name}`);
             }
           }
-        } else {
-          // Just display the normal response
-          console.log(chalk[responseColor]('AI: ') + aiResponse);
         }
 
         // Add AI response to conversation
@@ -411,12 +433,14 @@ export async function startRepl(): Promise<void> {
 
     rl.prompt();
   }).on('close', () => {
+    analytics.endSession();
     console.log(chalk[infoColor]('Goodbye!'));
     process.exit(0);
   });
 
   // Setup cleanup function for graceful exit
   function cleanup(): void {
+    analytics.endSession();
     savePermissionConfig();
     cleanupPermissionConfig();
     if (process.stdin.isTTY) {

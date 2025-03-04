@@ -36,6 +36,67 @@ program
     }
   });
 
+// Implement the log command
+program
+  .command('log')
+  .description('View logs from the application')
+  .option(
+    '-t, --type <type>',
+    'Type of log to view (actions, error, conversation, analytics)',
+    'actions',
+  )
+  .option('-n, --lines <number>', 'Number of lines to display', '20')
+  .option('-a, --all', 'Show all log entries')
+  .action(async (options) => {
+    try {
+      const logDir = path.join(process.cwd(), 'logs');
+
+      // Ensure logs directory exists
+      if (!fs.existsSync(logDir)) {
+        console.error('No logs found. Run a REPL session first.');
+        return;
+      }
+
+      // Map log type to file
+      const logTypes: Record<string, string> = {
+        actions: 'actions.log',
+        error: 'error.log',
+        conversation: 'conversation.log',
+        analytics: 'analytics.log',
+      };
+
+      const logType = options.type.toLowerCase();
+      if (!logTypes[logType]) {
+        console.error(`Unknown log type: ${logType}`);
+        console.error(`Available types: ${Object.keys(logTypes).join(', ')}`);
+        return;
+      }
+
+      const logFile = path.join(logDir, logTypes[logType]);
+
+      if (!fs.existsSync(logFile)) {
+        console.error(`No ${logType} log file found.`);
+        return;
+      }
+
+      // Read the log file
+      const logContent = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
+
+      // Determine number of lines to display
+      const numLines = options.all ? logContent.length : parseInt(options.lines, 10);
+
+      // Display the log content (last N lines)
+      const linesToShow = logContent.slice(-numLines);
+
+      console.log(`Showing the last ${linesToShow.length} entries from ${logType} log:\n`);
+      for (const line of linesToShow) {
+        console.log(line);
+      }
+    } catch (error) {
+      console.error('Error viewing logs:', (error as Error).message);
+    }
+  });
+
 // Implement the config command
 program
   .command('config')
