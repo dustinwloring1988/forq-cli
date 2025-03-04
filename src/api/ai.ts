@@ -45,14 +45,37 @@ const DEFAULT_AI_OPTIONS: AIOptions = {
 
 /**
  * Convert our internal message format to Anthropic's format
+ * @param messages Array of our internal ForqMessage objects
+ * @param debug Whether to log debug information about the conversion
+ * @returns Array of Anthropic MessageParam objects
  */
-function convertToAnthropicMessages(messages: ForqMessage[]): Anthropic.MessageParam[] {
-  return messages
-    .filter((msg) => msg.role !== 'system')
-    .map((msg) => ({
+function convertToAnthropicMessages(
+  messages: ForqMessage[],
+  debug: boolean = false,
+): Anthropic.MessageParam[] {
+  const result: Anthropic.MessageParam[] = [];
+
+  for (const msg of messages) {
+    // Skip system messages as they're handled separately
+    if (msg.role === 'system') continue;
+
+    // Create the message in Anthropic format
+    const anthropicMsg: Anthropic.MessageParam = {
       role: msg.role as 'user' | 'assistant',
       content: msg.content,
-    }));
+    };
+
+    result.push(anthropicMsg);
+  }
+
+  if (debug) {
+    logger.logAction('Converted Messages', {
+      count: result.length,
+      roles: result.map((m) => m.role).join(','),
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -263,7 +286,11 @@ export async function sendToolResultToAI(
   options?: AIOptions,
 ): Promise<AIResponse> {
   try {
-    const anthropicMessages = convertToAnthropicMessages(messages);
+    // Enable debug mode to troubleshoot message conversion
+    const debug = true;
+
+    // Convert messages with debug enabled
+    const anthropicMessages = convertToAnthropicMessages(messages, debug);
     const systemPrompt = extractSystemMessage(messages);
 
     // Merge default options with provided options
@@ -279,7 +306,9 @@ export async function sendToolResultToAI(
         {
           type: 'tool_result',
           tool_use_id: toolUseId,
-          content: JSON.stringify(toolResult.result),
+          content: toolResult.error
+            ? JSON.stringify({ error: toolResult.error })
+            : JSON.stringify(toolResult.result || {}),
           ...(toolResult.error ? { is_error: true } : {}),
         },
       ],
@@ -290,6 +319,19 @@ export async function sendToolResultToAI(
       toolUseId,
       result: toolResult.result,
       error: toolResult.error,
+      success: toolResult.success,
+    });
+
+    // Log the messages being sent to help with debugging
+    logger.logAction('Sending Messages to API', {
+      messageCount: anthropicMessages.length,
+      lastMessage: JSON.stringify(anthropicMessages[anthropicMessages.length - 1]),
+      hasToolUse: anthropicMessages.some(
+        (msg) =>
+          msg.content &&
+          Array.isArray(msg.content) &&
+          msg.content.some((block) => block.type === 'tool_use'),
+      ),
     });
 
     // Add the tool result message to the conversation

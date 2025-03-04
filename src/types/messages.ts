@@ -10,4 +10,6 @@ export interface Message {
   role: 'system' | 'user' | 'assistant';
   /** The content of the message */
   content: string;
+  /** Optional metadata for tracking, debugging, etc. */
+  metadata?: Record<string, any>;
 }

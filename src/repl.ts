@@ -351,6 +351,9 @@ export async function startRepl(): Promise<void> {
             conversation.push({
               role: 'assistant',
               content: responseContent,
+              metadata: {
+                originalResponse: response,
+              },
             });
 
             // Log assistant response
@@ -376,42 +379,76 @@ export async function startRepl(): Promise<void> {
                 try {
                   // Execute the tool and get result
                   const result = await executeTool(toolCall, toolContext);
-                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
 
                   // Check if we should complete the tool cycle by sending result back to Claude
                   const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
                   const isToolUse = response.stopReason === 'tool_use';
 
-                  if (completeToolCycle && isToolUse && response.toolUseId) {
+                  // Log the tool execution
+                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+
+                  // Only send tool results back to Claude if:
+                  // 1. The complete tool cycle feature is enabled
+                  // 2. The stop reason is 'tool_use'
+                  // 3. There's a toolUseId available
+                  // 4. We have a valid tool result
+                  if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
                     console.log(chalk[infoColor]('Sending tool result back to Claude...'));
 
                     // Import the sendToolResultToAI function from the AI API
                     const { sendToolResultToAI } = await import('./api/ai.js');
 
-                    // Create a shallow copy of the conversation to avoid modifying the original
-                    const conversationCopy = [...conversation];
+                    try {
+                      // Create a specialized conversation copy with the right format
+                      const specialConversation: any[] = [];
 
-                    // Send the tool result back to Claude
-                    const finalResponse = await sendToolResultToAI(
-                      conversationCopy,
-                      result,
-                      response.toolUseId,
-                      {},
-                    );
+                      // First, add all messages up to but not including the last assistant message
+                      for (let i = 0; i < conversation.length - 1; i++) {
+                        specialConversation.push({
+                          role: conversation[i].role,
+                          content: conversation[i].content,
+                        });
+                      }
 
-                    // Process the final response
-                    if (finalResponse) {
-                      // Print the response
-                      console.log('\n' + chalk[responseColor](finalResponse.text));
-
-                      // Add the final response to the conversation
-                      conversation.push({
+                      // Add the last assistant message with tool_use content
+                      specialConversation.push({
                         role: 'assistant',
-                        content: finalResponse.text,
+                        content: response.toolCalls.map((call) => ({
+                          type: 'tool_use',
+                          id: response.toolUseId,
+                          name: call.name,
+                          input: call.parameters,
+                        })),
                       });
 
-                      // Log the final response
-                      logger.logConversation(`AI (final): ${finalResponse.text}`);
+                      // Send the tool result back to Claude using the specialized conversation
+                      const finalResponse = await sendToolResultToAI(
+                        specialConversation as any,
+                        result,
+                        response.toolUseId,
+                        {},
+                      );
+
+                      // Process the final response
+                      if (finalResponse) {
+                        // Print the response
+                        console.log('\n' + chalk[responseColor](finalResponse.text));
+
+                        // Add the final response to the conversation
+                        conversation.push({
+                          role: 'assistant',
+                          content: finalResponse.text,
+                        });
+
+                        // Log the final response
+                        logger.logConversation(`AI (final): ${finalResponse.text}`);
+                      }
+                    } catch (toolResultError) {
+                      console.error(
+                        chalk[errorColor](
+                          `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
+                        ),
+                      );
                     }
                   }
                 } catch (error) {

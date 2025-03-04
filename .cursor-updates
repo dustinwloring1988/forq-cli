@@ -40,3 +40,6 @@
 - Implemented configuration option to enable/disable the complete tool cycle feature.
 - Added a new REPL command `/tool-cycle` to toggle the tool cycle setting.
 - Removed deprecated `extractToolCalls` function in favor of new structured response handling.
+- Fixed bugs in tool cycle implementation including proper error handling and message formatting.
+- Enhanced debugging capabilities for tool result processing with detailed logging.
+- Added message metadata support to correctly preserve original API responses.
