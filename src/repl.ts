@@ -151,10 +151,11 @@ export async function startRepl(): Promise<void> {
   // Get auto-compact threshold from config or use default
   const autoCompactThreshold = config.repl?.autoCompactThreshold || MAX_CONVERSATION_LENGTH * 2;
 
+  // Create a readline interface with echo disabled
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk[promptColor](promptStyle),
+    terminal: false, // Disable automatic terminal handling
     historySize: historySize,
     completer: (line: string) => {
       const completions = ['/help', '/clear', '/exit', '/reset', '/tools', '/compact', '/config'];
@@ -163,100 +164,78 @@ export async function startRepl(): Promise<void> {
     },
   });
 
-  // We're going to use the built-in readline history functionality instead of raw mode
-  // This avoids the character duplication issue
+  // Initialize the current line buffer
+  let currentLine = '';
+
+  // Print the prompt initially
+  process.stdout.write(chalk[promptColor](promptStyle));
+
+  // Enable raw mode for character-by-character input
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
+  process.stdin.resume();
+
+  // Set up keypress events for handling input
+  readline.emitKeypressEvents(process.stdin);
+
+  // Handle keypress events for manual input display
+  process.stdin.on('keypress', (str, key) => {
+    if (key.ctrl && key.name === 'c') {
+      // Handle Ctrl+C to exit
+      process.exit();
+    } else if (key.name === 'return') {
+      // Handle Enter key - execute the current line
+      process.stdout.write('\n');
+      const line = currentLine;
+      currentLine = '';
+      rl.emit('line', line);
+      process.stdout.write(chalk[promptColor](promptStyle));
+    } else if (key.name === 'backspace') {
+      // Handle backspace
+      if (currentLine.length > 0) {
+        currentLine = currentLine.slice(0, -1);
+        process.stdout.write('\b \b'); // Erase the last character
+      }
+    } else if (key.name === 'up' || key.name === 'down') {
+      // Handle history navigation
+      let newLine = '';
+      if (key.name === 'up') {
+        if (historyIndex > 0) {
+          historyIndex--;
+          newLine = history[historyIndex];
+        }
+      } else if (key.name === 'down') {
+        if (historyIndex < history.length - 1) {
+          historyIndex++;
+          newLine = history[historyIndex];
+        } else {
+          historyIndex = history.length;
+          newLine = '';
+        }
+      }
+
+      // Clear current line and replace with history item
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      process.stdout.write(chalk[promptColor](promptStyle) + newLine);
+      currentLine = newLine;
+    } else if (str && !key.ctrl && !key.meta && !key.alt) {
+      // For normal characters, add to current line and display
+      currentLine += str;
+      process.stdout.write(str);
+    }
+  });
 
   console.log(
     chalk[successColor]('Welcome to forq CLI!'),
     chalk[infoColor]('Type /help for available commands.'),
   );
-  rl.prompt();
 
-  // Add the command history to readline
-  if (history.length > 0) {
-    // Note: Directly manipulating readline history is not officially supported,
-    // but it works for the Node.js readline implementation
-    (rl as any).history = [...history].reverse();
-  }
+  // Remove the original prompt call since we're handling it manually
+  // rl.prompt();
 
-  /**
-   * Compacts the conversation history to reduce token usage
-   * Keeps the system prompt, summarizes older messages, and preserves recent messages
-   */
-  function compactConversationHistory(): void {
-    if (conversation.length <= 2) {
-      console.log(chalk[infoColor]('Conversation too short to compact.'));
-      return;
-    }
-
-    // Always keep the system prompt (first message)
-    const systemPrompt = conversation[0];
-
-    // If conversation is already small, don't compact
-    if (conversation.length <= MAX_CONVERSATION_LENGTH) {
-      console.log(chalk[infoColor]('Conversation already compact.'));
-      return;
-    }
-
-    // Determine which messages to keep in full and which to summarize
-    const keepCount = Math.min(MAX_CONVERSATION_LENGTH, conversation.length - 1);
-    const messagesToSummarize = conversation.slice(1, -keepCount);
-    const messagesToKeep = conversation.slice(-keepCount);
-
-    // Create a summary message
-    const summaryContent =
-      `[This is a summary of ${messagesToSummarize.length} earlier messages in the conversation]\n\n` +
-      messagesToSummarize
-        .map((msg) => {
-          return `${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}: ${
-            msg.content.length > 100 ? msg.content.substring(0, 100) + '...' : msg.content
-          }`;
-        })
-        .join('\n\n');
-
-    // Create a new conversation with: system prompt, summary message, and recent messages
-    conversation.length = 0;
-    conversation.push(systemPrompt);
-    conversation.push({
-      role: 'system',
-      content: summaryContent,
-    });
-    messagesToKeep.forEach((msg) => conversation.push(msg));
-
-    console.log(
-      chalk[successColor](
-        `Compacted conversation history. Summarized ${messagesToSummarize.length} messages.`,
-      ),
-    );
-  }
-
-  /**
-   * Displays REPL configuration status
-   */
-  function displayConfig(): void {
-    const currentConfig = getConfig();
-    console.log(chalk[infoColor]('Current REPL Configuration:'));
-
-    console.log(chalk[infoColor]('API Settings:'));
-    console.log(`  Model: ${currentConfig.api?.anthropic?.model || 'default'}`);
-    console.log(`  Max Tokens: ${currentConfig.api?.anthropic?.maxTokens || 'default'}`);
-    console.log(`  Temperature: ${currentConfig.api?.anthropic?.temperature || 'default'}`);
-
-    console.log(chalk[infoColor]('REPL Settings:'));
-    console.log(`  History Size: ${currentConfig.repl?.historySize || 'default'}`);
-    console.log(
-      `  Auto-Compact Threshold: ${currentConfig.repl?.autoCompactThreshold || 'default'}`,
-    );
-
-    console.log(chalk[infoColor]('Logging Settings:'));
-    console.log(`  Log Level: ${currentConfig.logging?.level || 'default'}`);
-    console.log(`  Log Conversation: ${currentConfig.logging?.logConversation ? 'Yes' : 'No'}`);
-    console.log(`  Log Tool Calls: ${currentConfig.logging?.logToolCalls ? 'Yes' : 'No'}`);
-
-    console.log(chalk[infoColor]('\nTo modify settings, use the config command:'));
-    console.log(`  forq config --help`);
-  }
-
+  // Handle the actual processing of completed lines
   rl.on('line', async (line) => {
     // Track input as a command (if it's a special command)
     if (line.startsWith('/')) {
@@ -400,7 +379,8 @@ export async function startRepl(): Promise<void> {
       }
     }
 
-    rl.prompt();
+    // Remove the original prompt call since we're handling it manually
+    // rl.prompt();
   }).on('close', () => {
     analytics.endSession();
     console.log(chalk[infoColor]('Goodbye!'));
@@ -412,6 +392,10 @@ export async function startRepl(): Promise<void> {
     analytics.endSession();
     savePermissionConfig();
     cleanupPermissionConfig();
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+    process.stdin.pause();
   }
 
   // Register cleanup handlers
@@ -420,4 +404,86 @@ export async function startRepl(): Promise<void> {
     console.log(chalk[infoColor]('\nReceived SIGINT. Cleaning up...'));
     process.exit(0);
   });
+  process.on('SIGTERM', () => {
+    console.log(chalk[infoColor]('\nTerminated. Cleaning up...'));
+    process.exit(0);
+  });
+
+  /**
+   * Compacts the conversation history to reduce token usage
+   * Keeps the system prompt, summarizes older messages, and preserves recent messages
+   */
+  function compactConversationHistory(): void {
+    if (conversation.length <= 2) {
+      console.log(chalk[infoColor]('Conversation too short to compact.'));
+      return;
+    }
+
+    // Always keep the system prompt (first message)
+    const systemPrompt = conversation[0];
+
+    // If conversation is already small, don't compact
+    if (conversation.length <= MAX_CONVERSATION_LENGTH) {
+      console.log(chalk[infoColor]('Conversation already compact.'));
+      return;
+    }
+
+    // Determine which messages to keep in full and which to summarize
+    const keepCount = Math.min(MAX_CONVERSATION_LENGTH, conversation.length - 1);
+    const messagesToSummarize = conversation.slice(1, -keepCount);
+    const messagesToKeep = conversation.slice(-keepCount);
+
+    // Create a summary message
+    const summaryContent =
+      `[This is a summary of ${messagesToSummarize.length} earlier messages in the conversation]\n\n` +
+      messagesToSummarize
+        .map((msg) => {
+          return `${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}: ${
+            msg.content.length > 100 ? msg.content.substring(0, 100) + '...' : msg.content
+          }`;
+        })
+        .join('\n\n');
+
+    // Create a new conversation with: system prompt, summary message, and recent messages
+    conversation.length = 0;
+    conversation.push(systemPrompt);
+    conversation.push({
+      role: 'system',
+      content: summaryContent,
+    });
+    messagesToKeep.forEach((msg) => conversation.push(msg));
+
+    console.log(
+      chalk[successColor](
+        `Compacted conversation history. Summarized ${messagesToSummarize.length} messages.`,
+      ),
+    );
+  }
+
+  /**
+   * Displays REPL configuration status
+   */
+  function displayConfig(): void {
+    const currentConfig = getConfig();
+    console.log(chalk[infoColor]('Current REPL Configuration:'));
+
+    console.log(chalk[infoColor]('API Settings:'));
+    console.log(`  Model: ${currentConfig.api?.anthropic?.model || 'default'}`);
+    console.log(`  Max Tokens: ${currentConfig.api?.anthropic?.maxTokens || 'default'}`);
+    console.log(`  Temperature: ${currentConfig.api?.anthropic?.temperature || 'default'}`);
+
+    console.log(chalk[infoColor]('REPL Settings:'));
+    console.log(`  History Size: ${currentConfig.repl?.historySize || 'default'}`);
+    console.log(
+      `  Auto-Compact Threshold: ${currentConfig.repl?.autoCompactThreshold || 'default'}`,
+    );
+
+    console.log(chalk[infoColor]('Logging Settings:'));
+    console.log(`  Log Level: ${currentConfig.logging?.level || 'default'}`);
+    console.log(`  Log Conversation: ${currentConfig.logging?.logConversation ? 'Yes' : 'No'}`);
+    console.log(`  Log Tool Calls: ${currentConfig.logging?.logToolCalls ? 'Yes' : 'No'}`);
+
+    console.log(chalk[infoColor]('\nTo modify settings, use the config command:'));
+    console.log(`  forq config --help`);
+  }
 }

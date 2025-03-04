@@ -28,4 +28,4 @@
 
 ## 2024-03-14
 
-- Fixed character duplication bug in REPL by replacing custom raw mode input handling with built-in readline history functionality.
+- Fixed character duplication bug in REPL by implementing custom input handling with terminal.false and manual character rendering.
