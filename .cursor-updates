@@ -7,9 +7,11 @@
 - Implemented System Prompt and User Prompt Management with config/systemPrompt.ts, AI API integration, and conversation history logging.
 - Implemented Tool System core with Tool interface, dynamic tool loading, tool execution, and AI integration. Added echo and listDir tools for testing.
 - Fixed compatibility issue with chalk by downgrading to v4.1.2 and improved tool system to handle empty parameters correctly.
+- Implemented semantic tools: embedding, semantic search, and read semantic search files
+- Implemented bash tool for secure command execution with persistence
+- Added comprehensive permission system with user prompting and persistent configuration
 
 # Cursor Updates
 
 - Implemented file system tools (listDir, readFile, editFile, deleteFile, createFile) with error handling and security checks.
 - Implemented search tools (fileSearch, ripgrepSearch) with fuzzy filename matching and regex-based content search.
-- Implemented semantic tools (semanticEmbed, semanticSearch, readSemanticSearchFiles) with stub embedding function for semantic code searches.

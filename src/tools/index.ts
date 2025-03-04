@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Tool, ToolCall, ToolContext, ToolParameters, ToolResult } from '../types/tools';
 import { logger } from '../utils/logger';
+import { hasPermission, grantPermission, PermissionType } from '../utils/permissions';
+import { requestPermission } from '../utils/prompt';
 
 // Store for registered tools
 const tools: Map<string, Tool> = new Map();
@@ -97,6 +99,104 @@ export async function loadTools(toolsDir: string = path.join(__dirname)): Promis
 }
 
 /**
+ * Determine the permission type required for a tool
+ * @param toolName Name of the tool
+ * @returns Permission type needed for the tool
+ */
+function getPermissionTypeForTool(toolName: string): PermissionType {
+  switch (toolName) {
+    case 'listDir':
+    case 'readFile':
+    case 'editFile':
+    case 'deleteFile':
+    case 'createFile':
+    case 'fileSearch':
+    case 'ripgrepSearch':
+      return PermissionType.FileSystem;
+    case 'bash':
+      return PermissionType.ShellCommand;
+    case 'semanticEmbed':
+    case 'semanticSearch':
+    case 'readSemanticSearchFiles':
+      return PermissionType.Embedding;
+    default:
+      // Default to file system permission for unknown tools
+      return PermissionType.FileSystem;
+  }
+}
+
+/**
+ * Determine the scope for a permission based on tool and parameters
+ * @param toolName Name of the tool
+ * @param parameters Parameters passed to the tool
+ * @returns Scope string for the permission
+ */
+function getPermissionScope(toolName: string, parameters: ToolParameters): string | undefined {
+  switch (toolName) {
+    case 'listDir':
+      return parameters.dirPath as string;
+    case 'readFile':
+    case 'editFile':
+    case 'deleteFile':
+      return parameters.filePath as string;
+    case 'createFile':
+      return parameters.filePath as string;
+    case 'bash':
+      // For bash commands, we could potentially analyze the command
+      // and extract the directory affected, but for simplicity
+      // we'll return undefined (global permission)
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Check if a tool has permission to execute with the given parameters
+ * @param tool The tool to check permissions for
+ * @param parameters Parameters being passed to the tool
+ * @returns Whether the tool has permission
+ */
+async function checkToolPermission(tool: Tool, parameters: ToolParameters): Promise<boolean> {
+  // If tool doesn't require permission, allow execution
+  if (!tool.requiresPermission) {
+    return true;
+  }
+
+  // Determine permission type and scope
+  const permissionType = getPermissionTypeForTool(tool.name);
+  const scope = getPermissionScope(tool.name, parameters);
+
+  // Check if permission already granted
+  if (hasPermission(tool.name, permissionType, scope)) {
+    logger.logAction('Permission Check', {
+      tool: tool.name,
+      type: permissionType,
+      scope: scope || 'global',
+      result: 'Already granted',
+    });
+    return true;
+  }
+
+  // Request permission from user
+  // TODO: Extract scope-appropriate reason from parameters
+  let reason: string | undefined;
+  if (tool.name === 'bash') {
+    reason = `Execute command: ${parameters.command}`;
+  }
+
+  const granted = await requestPermission(tool.name, permissionType, scope, reason);
+
+  if (granted) {
+    // Save permission if granted
+    grantPermission(tool.name, permissionType, scope);
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Execute a tool based on AI-generated tool call
  * @param toolCall The tool call object from AI response parsing
  * @param context The context for tool execution
@@ -116,6 +216,22 @@ export async function executeTool(toolCall: ToolCall, context: ToolContext): Pro
   }
 
   try {
+    // Check permissions before executing tool
+    const hasPermission = await checkToolPermission(tool, parameters);
+
+    if (!hasPermission) {
+      logger.logAction('Tool Execution Denied', {
+        tool: name,
+        reason: 'Permission denied by user',
+      });
+
+      return {
+        toolName: name,
+        success: false,
+        error: 'Permission denied by user',
+      };
+    }
+
     logger.logAction('Tool Execution Started', {
       tool: name,
       parameters: JSON.stringify(parameters),

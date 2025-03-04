@@ -12,6 +12,12 @@ import { queryAI, streamAI } from './api/ai';
 import { logger } from './utils/logger';
 import { loadTools, extractToolCalls, executeTool, getAllTools, getToolsSchema } from './tools';
 import { ToolContext } from './types/tools';
+import {
+  initializePermissionConfig,
+  savePermissionConfig,
+  cleanupPermissionConfig,
+} from './config/permissions-config';
+import { closePrompt } from './utils/prompt';
 
 /**
  * Interactive REPL (Read-Eval-Print Loop) for the forq CLI
@@ -26,6 +32,9 @@ export async function startRepl(): Promise<void> {
         .map((t) => t.name)
         .join(', '),
   );
+
+  // Initialize permission system
+  initializePermissionConfig();
 
   // Create history file directory if it doesn't exist
   const historyDir = path.join(os.homedir(), '.forq');
@@ -239,4 +248,25 @@ export async function startRepl(): Promise<void> {
     console.log(chalk.yellow('Goodbye!'));
     process.exit(0);
   });
+
+  // Function to handle graceful shutdown
+  function cleanup(): void {
+    console.log(chalk.yellow('\nShutting down REPL...'));
+
+    // Save conversation history
+    fs.writeFileSync(historyFile, history.join('\n'), 'utf8');
+
+    // Save permissions
+    savePermissionConfig();
+
+    // Clean up resources
+    closePrompt();
+
+    console.log(chalk.green('Session data saved. Goodbye!'));
+    process.exit(0);
+  }
+
+  // Register cleanup handlers
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
 }
