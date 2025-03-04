@@ -1,0 +1,18 @@
+{
+  "tools": {
+    "readFile": [
+      {
+        "type": "file_system",
+        "granted": true,
+        "timestamp": 1741122828304
+      }
+    ],
+    "editFile": [
+      {
+        "type": "file_system",
+        "granted": true,
+        "timestamp": 1741123004505
+      }
+    ]
+  }
+}

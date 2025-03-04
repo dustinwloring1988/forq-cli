@@ -24,3 +24,4 @@
 - Enhanced error logging with stack traces through logger.ts
 - Created forq log CLI command to review session actions and logs
 - Added detailed diff generation for file modifications to track all changes transparently
+- Completed the Testing & Quality Assurance section by configuring Jest, adding initial tests for CLI and tools, and setting up GitHub Actions CI pipeline.
