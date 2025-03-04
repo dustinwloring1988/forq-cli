@@ -1,0 +1,6 @@
+# Forq CLI Updates
+
+- Implemented CLI interface with commander, including basic REPL command and help system.
+- Created interactive REPL implementation with readline, supporting basic commands (/help, /clear, /exit).
+- Enhanced REPL with command history navigation using arrow keys and colorful prompt using chalk.
+- Added npm script for easy REPL access: `npm run repl`. 

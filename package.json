@@ -1,0 +1,35 @@
+{
+  "name": "forq-cli",
+  "version": "1.0.0",
+  "description": "Terminal-based AI Coding Agent",
+  "main": "dist/index.js",
+  "bin": {
+    "forq": "./dist/bin/forq.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"**/*.{ts,json,md}\"",
+    "test": "jest",
+    "start": "node dist/bin/forq.js",
+    "prepare": "npm run build",
+    "repl": "node dist/bin/forq.js repl"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@typescript-eslint/eslint-plugin": "^8.26.0",
+    "@typescript-eslint/parser": "^8.26.0",
+    "eslint": "^9.21.0",
+    "eslint-config-prettier": "^10.0.2",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0"
+  }
+}
