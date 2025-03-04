@@ -78,16 +78,12 @@ export async function queryAI(messages: ForqMessage[], options?: AIOptions): Pro
       ...options,
     };
 
-    // Get tools schema
-    const tools = require('../tools').getToolsSchema();
-
     const response = await anthropic.messages.create({
       model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
       max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
       temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
-      tools: tools,
     });
 
     const responseText = response.content
@@ -130,16 +126,12 @@ export async function streamAI(
       ...options,
     };
 
-    // Get tools schema
-    const tools = require('../tools').getToolsSchema();
-
     const stream = await anthropic.messages.create({
       model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
       max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
       temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
-      tools: tools,
       stream: true,
     });
 
