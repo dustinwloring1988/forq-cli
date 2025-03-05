@@ -54,4 +54,3 @@
 - Enhanced ripgrepSearch tool with fallback mechanism when ripgrep is not installed, allowing seamless operation by implementing a Node.js-based file search algorithm.
 - Improved REPL agenticity by implementing recursive tool execution that automatically processes consecutive tool calls without returning to the prompt, enabling the AI to complete multi-step tasks in a single interaction.
 - Fixed conversation context for tool calls by adding tool results to the main conversation history, ensuring the AI has access to previous tool outputs for better context-aware responses.
-- Enhanced bash tool with improved Node.js command handling, adding pre-execution validation, shorter timeouts for simple commands, and detailed error reporting to prevent command timeouts.

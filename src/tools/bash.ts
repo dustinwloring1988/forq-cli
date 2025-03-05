@@ -4,10 +4,9 @@
  */
 
 import { Tool, ToolContext, ToolParameters } from '../types/tools';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as os from 'os';
 import * as path from 'path';
-import * as fs from 'fs';
 
 // Shell state to maintain persistence across commands
 let currentWorkingDirectory: string = process.cwd();
@@ -45,37 +44,11 @@ const DANGEROUS_COMMANDS = [
 // Default command timeout (2 minutes)
 const DEFAULT_TIMEOUT = 120000;
 
-// Shorter timeout for simple commands (10 seconds)
-const SIMPLE_COMMAND_TIMEOUT = 10000;
-
 /**
  * Checks if a command contains potentially dangerous operations
  */
 function isCommandDangerous(command: string): boolean {
   return DANGEROUS_COMMANDS.some((dangerousCmd) => command.includes(dangerousCmd));
-}
-
-/**
- * Check if this is a Node.js related command
- */
-function isNodeCommand(command: string): boolean {
-  return (
-    command.trim().startsWith('node ') ||
-    command.trim() === 'node' ||
-    command.trim().startsWith('npm ') ||
-    command.trim() === 'npm'
-  );
-}
-
-/**
- * Get Node.js executable path
- */
-function getNodePath(): string | null {
-  try {
-    return execSync('which node', { encoding: 'utf8' }).trim();
-  } catch (error) {
-    return null;
-  }
 }
 
 /**
@@ -92,98 +65,24 @@ async function executeCommand(
     throw new Error(`Command contains potentially dangerous operations: ${command}`);
   }
 
-  // Use shorter timeout for simple commands
-  if (
-    command.trim() === 'node --version' ||
-    command.trim() === 'npm --version' ||
-    command.trim().includes(' --help') ||
-    command.trim().includes(' -h') ||
-    command.trim().includes(' -v')
-  ) {
-    timeout = SIMPLE_COMMAND_TIMEOUT;
-  }
-
-  context.logger.logAction('Executing Bash Command', {
-    command,
-    cwd: currentWorkingDirectory,
-    timeout: timeout,
-  });
-
-  // Special handling for Node.js commands
-  if (isNodeCommand(command)) {
-    // Check if Node.js is available and log info
-    const nodePath = getNodePath();
-    if (!nodePath) {
-      return {
-        stdout: '',
-        stderr: 'Node.js not found in PATH. Please ensure Node.js is installed and in your PATH.',
-        exitCode: 1,
-      };
-    }
-
-    context.logger.logAction('Node.js Path', { path: nodePath });
-
-    // Check if the file exists for node execution
-    if (
-      command.startsWith('node ') &&
-      command.trim() !== 'node --version' &&
-      command.trim() !== 'node -v'
-    ) {
-      const filePath = command.substring(5).trim().split(' ')[0];
-      const fullPath = path.isAbsolute(filePath)
-        ? filePath
-        : path.join(currentWorkingDirectory, filePath);
-
-      if (!fs.existsSync(fullPath)) {
-        return {
-          stdout: '',
-          stderr: `File not found: ${filePath}`,
-          exitCode: 1,
-        };
-      }
-    }
-  }
+  context.logger.logAction('Executing Bash Command', { command, cwd: currentWorkingDirectory });
 
   // Return promise that resolves when command completes or times out
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
-    let isKilled = false;
 
     // Start timer for command timeout
     const timer = setTimeout(() => {
-      isKilled = true;
       child.kill();
-
-      // For debugging timeout issues
-      context.logger.logAction('Command Timeout', {
-        command,
-        timeout: timeout / 1000,
-        stdout_snippet: stdout.substring(0, 200) + (stdout.length > 200 ? '...' : ''),
-        stderr_snippet: stderr.substring(0, 200) + (stderr.length > 200 ? '...' : ''),
-      });
-
-      resolve({
-        stdout,
-        stderr: `Command execution timed out after ${timeout / 1000} seconds: ${command}`,
-        exitCode: 1,
-      });
+      reject(new Error(`Command execution timed out after ${timeout / 1000} seconds: ${command}`));
     }, timeout);
-
-    // Determine if we should use shell
-    // For most commands, using shell: true is fine
-    // For Node commands, we might want to execute them directly
-    const useShell =
-      !isNodeCommand(command) ||
-      command.includes('|') ||
-      command.includes('&&') ||
-      command.includes(';');
 
     // Spawn bash process
     const child = spawn('bash', ['-c', command], {
       cwd: currentWorkingDirectory,
       env: process.env,
-      shell: useShell,
+      shell: true,
     });
 
     // Collect stdout
@@ -200,8 +99,6 @@ async function executeCommand(
 
     // Handle process exit
     child.on('close', (code) => {
-      if (isKilled) return; // Already handled by timeout
-
       clearTimeout(timer);
       lastExitCode = code || 0;
 
@@ -252,7 +149,6 @@ export const tool: Tool = {
 * When invoking this tool, the command is executed in a persistent shell session.
 * State is persistent across command calls (working directory, environment variables).
 * Commands have a default timeout of 2 minutes to prevent hanging.
-* Simple commands (--version, --help) have a shorter timeout of 10 seconds.
 * Potentially dangerous system commands are blocked.
 * To inspect a particular line range of a file, use: 'sed -n 10,25p /path/to/file'.
 * For background tasks, append '&' to the command.`,

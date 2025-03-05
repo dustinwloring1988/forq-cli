@@ -39,4 +39,5 @@
 ### Complex Interactions
 
 18. `Find all files that import the Tool interface and explain how they use it` - Test semantic search and code analysis
-19. `Create a simple "hello world" function in a new file called hello.js and then run it` - Test multi-step task
+19. `Create a simple "hello world" function in a new file called hello.js` - Test multi-step task
+20. `Add more test coverage to this codebase` - Test high-level task understanding and execution
