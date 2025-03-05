@@ -81,7 +81,11 @@ async function executeCommand(
     // Spawn bash process
     const child = spawn('bash', ['-c', command], {
       cwd: currentWorkingDirectory,
-      env: process.env,
+      env: {
+        ...process.env,
+        // Add common paths for npm, node executables
+        PATH: `${process.env.PATH}:${os.homedir()}/.nvm/versions/node/*/bin:${os.homedir()}/.npm/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin`,
+      },
       shell: true,
     });
 

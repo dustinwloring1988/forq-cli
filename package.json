@@ -14,7 +14,8 @@
     "test": "jest",
     "start": "node dist/src/bin/forq.js",
     "prepare": "npm run build",
-    "repl": "node dist/src/bin/forq.js repl"
+    "repl": "node dist/src/bin/forq.js repl",
+    "global-install": "npm run build && npm link"
   },
   "keywords": [],
   "author": "",
