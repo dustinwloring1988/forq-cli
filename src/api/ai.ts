@@ -44,10 +44,7 @@ const DEFAULT_AI_OPTIONS: AIOptions = {
 };
 
 /**
- * Convert our internal message format to Anthropic's format
- * @param messages Array of our internal ForqMessage objects
- * @param debug Whether to log debug information about the conversion
- * @returns Array of Anthropic MessageParam objects
+ * Convert Forq messages to Anthropic format
  */
 function convertToAnthropicMessages(
   messages: ForqMessage[],
@@ -58,6 +55,14 @@ function convertToAnthropicMessages(
   for (const msg of messages) {
     // Skip system messages as they're handled separately
     if (msg.role === 'system') continue;
+
+    // Skip messages with empty content
+    if (!msg.content) {
+      if (debug) {
+        logger.logAction('Skipping Empty Message', { role: msg.role });
+      }
+      continue;
+    }
 
     // Create the message in Anthropic format
     const anthropicMsg: Anthropic.MessageParam = {
@@ -272,11 +277,11 @@ export async function streamAI(
 }
 
 /**
- * Send a tool result back to the AI to complete the tool call cycle
- * @param messages Array of previous messages in the conversation
- * @param toolResult Result from executing the tool
- * @param toolUseId ID of the tool use from Claude's response
- * @param options Optional configuration options
+ * Send a tool result back to the AI
+ * @param messages Conversation messages
+ * @param toolResult Result from tool execution
+ * @param toolUseId ID of the tool use request
+ * @param options AI options
  * @returns Promise resolving to an AIResponse object
  */
 export async function sendToolResultToAI(
@@ -289,9 +294,12 @@ export async function sendToolResultToAI(
     // Enable debug mode to troubleshoot message conversion
     const debug = true;
 
+    // Filter out any messages with empty content before conversion
+    const validMessages = messages.filter((msg) => msg.content || msg.role === 'system');
+
     // Convert messages with debug enabled
-    const anthropicMessages = convertToAnthropicMessages(messages, debug);
-    const systemPrompt = extractSystemMessage(messages);
+    const anthropicMessages = convertToAnthropicMessages(validMessages, debug);
+    const systemPrompt = extractSystemMessage(validMessages);
 
     // Merge default options with provided options
     const mergedOptions = {
