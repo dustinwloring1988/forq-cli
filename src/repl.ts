@@ -425,29 +425,58 @@ export async function startRepl(): Promise<void> {
                       })),
                     });
 
+                    console.log(chalk[infoColor]('Sending tool result back to Claude...'));
+
+                    // Set a flag to indicate that we're in the middle of a tool cycle
+                    let toolCycleInProgress = true;
+
                     // Send the tool result back to Claude using the specialized conversation
-                    // Note: We're deliberately not awaiting this call so that the REPL can continue
                     sendToolResultToAI(specialConversation as any, result, response.toolUseId, {})
                       .then((finalResponse) => {
                         // Process the final response
                         if (finalResponse) {
-                          // Print the response
-                          console.log('\n' + chalk[responseColor](finalResponse.text));
+                          // Check if the final response includes more tool calls
+                          const hasMoreToolCalls =
+                            finalResponse.toolCalls && finalResponse.toolCalls.length > 0;
+
+                          // Print the response text if there is any
+                          if (finalResponse.text && finalResponse.text.trim()) {
+                            console.log('\n' + chalk[responseColor](finalResponse.text));
+                          }
 
                           // Add the final response to the conversation
                           conversation.push({
                             role: 'assistant',
                             content: finalResponse.text,
+                            metadata: {
+                              originalResponse: finalResponse,
+                            },
                           });
 
                           // Log the final response
                           logger.logConversation(`AI (final): ${finalResponse.text}`);
 
-                          // Print a new prompt after the response is added
+                          // If there are more tool calls, process them instead of returning to prompt
+                          if (hasMoreToolCalls && finalResponse.stopReason === 'tool_use') {
+                            console.log(chalk[infoColor]('Continuing with next tool call...'));
+
+                            // Process the tool calls from the final response
+                            processToolCalls(finalResponse);
+                          } else {
+                            // No more tool calls, return to REPL prompt
+                            toolCycleInProgress = false;
+                            // Print a new prompt after the response is added
+                            process.stdout.write(chalk[promptColor](promptStyle));
+                          }
+                        } else {
+                          toolCycleInProgress = false;
+                          // Print a new prompt if there's no final response
                           process.stdout.write(chalk[promptColor](promptStyle));
                         }
                       })
                       .catch((toolResultError) => {
+                        toolCycleInProgress = false;
+
                         console.error(
                           chalk[errorColor](
                             `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
@@ -481,6 +510,133 @@ export async function startRepl(): Promise<void> {
           console.error(chalk[errorColor](`Error: ${(error as Error).message}`));
           logger.logError((error as Error).message, 'REPL Error');
         }
+      }
+
+      // Define processToolCalls function inside replLoop to access all variables
+      function processToolCalls(response: any) {
+        if (!response || !response.toolCalls || response.toolCalls.length === 0) {
+          // No tool calls to process, return to prompt
+          process.stdout.write(chalk[promptColor](promptStyle));
+          return;
+        }
+
+        // Process each tool call sequentially
+        const processNextTool = async (index = 0) => {
+          if (index >= response.toolCalls.length) {
+            // All tools processed, we're done with this cycle
+            return;
+          }
+
+          const toolCall = response.toolCalls[index];
+          // Log the tool call
+          logger.logAction(`Executing tool: ${toolCall.name}`);
+          analytics.trackToolUsage(toolCall.name);
+
+          try {
+            // Execute the tool and get result
+            const result = await executeTool(toolCall, toolContext);
+
+            // Log the tool execution
+            console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+
+            if (
+              result.success &&
+              index === response.toolCalls.length - 1 &&
+              response.stopReason === 'tool_use' &&
+              response.toolUseId
+            ) {
+              // This was the last tool call in this batch, send result back to Claude
+              console.log(chalk[infoColor]('Sending tool result back to Claude...'));
+
+              // Create a specialized conversation copy with the right format
+              const specialConversation: any[] = [];
+
+              // First, add all messages up to but not including the last assistant message
+              for (let i = 0; i < conversation.length - 1; i++) {
+                specialConversation.push({
+                  role: conversation[i].role,
+                  content: conversation[i].content,
+                });
+              }
+
+              // Add the last assistant message with tool_use content
+              specialConversation.push({
+                role: 'assistant',
+                content: response.toolCalls.map((call: any) => ({
+                  type: 'tool_use',
+                  id: response.toolUseId,
+                  name: call.name,
+                  input: call.parameters,
+                })),
+              });
+
+              // Import the sendToolResultToAI function if needed
+              const { sendToolResultToAI } = await import('./api/ai.js');
+
+              // Send the tool result back to Claude
+              const finalResponse = await sendToolResultToAI(
+                specialConversation as any,
+                result,
+                response.toolUseId,
+                {},
+              );
+
+              // Process the final response
+              if (finalResponse) {
+                // Check if there are more tool calls
+                const hasMoreToolCalls =
+                  finalResponse.toolCalls && finalResponse.toolCalls.length > 0;
+
+                // Print the response text if any
+                if (finalResponse.text && finalResponse.text.trim()) {
+                  console.log('\n' + chalk[responseColor](finalResponse.text));
+                }
+
+                // Add the final response to the conversation
+                conversation.push({
+                  role: 'assistant',
+                  content: finalResponse.text,
+                  metadata: {
+                    originalResponse: finalResponse,
+                  },
+                });
+
+                // Log the final response
+                logger.logConversation(`AI (final): ${finalResponse.text}`);
+
+                // If there are more tool calls, recursively process them
+                if (hasMoreToolCalls && finalResponse.stopReason === 'tool_use') {
+                  console.log(chalk[infoColor]('Continuing with next tool call...'));
+                  processToolCalls(finalResponse);
+                } else {
+                  // No more tool calls, return to the prompt
+                  process.stdout.write(chalk[promptColor](promptStyle));
+                }
+              } else {
+                // No response, return to the prompt
+                process.stdout.write(chalk[promptColor](promptStyle));
+              }
+            } else if (result.success) {
+              // Process the next tool in the batch
+              processNextTool(index + 1);
+            } else {
+              // Tool execution failed, return to the prompt
+              console.error(
+                chalk[errorColor](`Error executing tool ${toolCall.name}: ${result.error}`),
+              );
+              process.stdout.write(chalk[promptColor](promptStyle));
+            }
+          } catch (error) {
+            const errorMessage = (error as Error).message;
+            console.error(
+              chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
+            );
+            process.stdout.write(chalk[promptColor](promptStyle));
+          }
+        };
+
+        // Start processing tools
+        processNextTool();
       }
 
       // Continue the REPL loop
