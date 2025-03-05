@@ -20,6 +20,12 @@
         "granted": true,
         "scope": "test.txt",
         "timestamp": 1741131852486
+      },
+      {
+        "type": "file_system",
+        "granted": true,
+        "scope": "hello.js",
+        "timestamp": 1741148444696
       }
     ],
     "deleteFile": [
