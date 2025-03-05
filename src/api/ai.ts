@@ -194,18 +194,18 @@ export async function queryAI(messages: ForqMessage[], options?: AIOptions): Pro
 }
 
 /**
- * Stream the AI's response to a callback function
- * @param messages Array of messages to send to the AI
- * @param onChunk Callback function to process each chunk of the response
+ * Stream AI response to a callback function
+ * @param messages Conversation messages
+ * @param onChunk Callback function called for each text chunk
  * @param onComplete Callback function called when the response is complete with full text and tool calls
  * @param options Optional configuration options
  */
 export async function streamAI(
   messages: ForqMessage[],
   onChunk: (text: string) => void,
-  onComplete?: (response: AIResponse) => void,
+  onComplete?: (response: AIResponse) => Promise<void> | void,
   options?: AIOptions,
-): Promise<void> {
+): Promise<AIResponse> {
   try {
     const anthropicMessages = convertToAnthropicMessages(messages);
     const systemPrompt = extractSystemMessage(messages);
@@ -251,28 +251,34 @@ export async function streamAI(
 
     logger.logConversation(`AI Response: ${responseText}`);
 
+    const aiResponse: AIResponse = {
+      text: responseText,
+      toolCalls,
+      stopReason: response.stop_reason,
+      toolUseId:
+        toolCalls.length > 0 ? response.content.find((c) => c.type === 'tool_use')?.id : undefined,
+    };
+
     if (onComplete) {
-      onComplete({
-        text: responseText,
-        toolCalls,
-        stopReason: response.stop_reason,
-        toolUseId:
-          toolCalls.length > 0
-            ? response.content.find((c) => c.type === 'tool_use')?.id
-            : undefined,
-      });
+      await onComplete(aiResponse);
     }
+
+    return aiResponse;
   } catch (error) {
     logger.logError(error as Error, 'AI Streaming Error');
     onChunk(`Error streaming from AI: ${(error as Error).message}`);
 
+    const errorResponse: AIResponse = {
+      text: `Error streaming from AI: ${(error as Error).message}`,
+      toolCalls: [],
+      stopReason: 'error',
+    };
+
     if (onComplete) {
-      onComplete({
-        text: `Error streaming from AI: ${(error as Error).message}`,
-        toolCalls: [],
-        stopReason: 'error',
-      });
+      await onComplete(errorResponse);
     }
+
+    return errorResponse;
   }
 }
 

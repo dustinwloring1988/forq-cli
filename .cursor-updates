@@ -59,3 +59,11 @@
 
 - Fixed module system compatibility issue by changing tsconfig.json from "NodeNext" to "CommonJS" and "Node" to resolve "Unexpected token 'export'" errors when loading TypeScript definition files.
 - Fixed API request error with empty message content by filtering out messages with empty content before sending to Anthropic API.
+
+## 2024-05-31
+
+- Fixed asynchronous control flow issues in REPL's agentic workflow by modifying streamAI to return proper promises and await completion.
+- Consolidated duplicate processToolCalls functions into a single recursive handleToolCallsRecursively function that properly awaits all tool executions.
+- Replaced .then() usage with async/await throughout the codebase for more predictable control flow.
+- Ensured the REPL prompt is not displayed until the entire chain of tool calls and AI responses is fully completed.
+- Improved streaming implementation to ensure proper handling of tool calls while maintaining a responsive user interface.

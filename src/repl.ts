@@ -330,6 +330,132 @@ export async function startRepl(): Promise<void> {
           // Get AI response using stream for better UX
           let responseContent = '';
 
+          // Process tool calls recursively until we have a final response with no more tool calls
+          async function handleToolCallsRecursively(response: {
+            text: string;
+            toolCalls: any[];
+            stopReason: string | null;
+            toolUseId?: string;
+          }): Promise<void> {
+            // If there are no tool calls or stopReason is not tool_use, we're done
+            if (
+              !response.toolCalls ||
+              response.toolCalls.length === 0 ||
+              response.stopReason !== 'tool_use'
+            ) {
+              return;
+            }
+
+            // Process each tool call sequentially
+            for (const toolCall of response.toolCalls) {
+              // Log the tool call
+              logger.logAction(`Executing tool: ${toolCall.name}`);
+              analytics.trackToolUsage(toolCall.name);
+
+              try {
+                // Execute the tool and get result
+                const result = await executeTool(toolCall, toolContext);
+
+                // Log the tool execution
+                console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+
+                // Add tool result to conversation history as a user message
+                conversation.push({
+                  role: 'user',
+                  content: `Tool result for ${toolCall.name}: ${JSON.stringify(result.result || {})}`,
+                  metadata: {
+                    isToolResult: true,
+                    toolName: toolCall.name,
+                    toolResult: result,
+                  },
+                });
+
+                // Check if we should complete the tool cycle by sending result back to Claude
+                const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
+                const isToolUse = response.stopReason === 'tool_use';
+
+                // Only send tool results back to Claude if:
+                // 1. The complete tool cycle feature is enabled
+                // 2. The stop reason is 'tool_use'
+                // 3. There's a toolUseId available
+                // 4. We have a valid tool result
+                if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
+                  console.log(chalk[infoColor]('Sending tool result back to Claude...'));
+
+                  // Import the sendToolResultToAI function from the AI API
+                  const { sendToolResultToAI } = await import('./api/ai.js');
+
+                  // Create a specialized conversation copy with the right format
+                  const specialConversation: any[] = [];
+
+                  // First, add all messages up to but not including the last assistant message
+                  for (let i = 0; i < conversation.length - 1; i++) {
+                    specialConversation.push({
+                      role: conversation[i].role,
+                      content: conversation[i].content,
+                    });
+                  }
+
+                  // Add the last assistant message with tool_use content
+                  specialConversation.push({
+                    role: 'assistant',
+                    content: response.toolCalls.map((call) => ({
+                      type: 'tool_use',
+                      id: response.toolUseId,
+                      name: call.name,
+                      input: call.parameters,
+                    })),
+                  });
+
+                  // Send the tool result back to Claude and wait for the response
+                  const finalResponse = await sendToolResultToAI(
+                    specialConversation as any,
+                    result,
+                    response.toolUseId,
+                    {},
+                  );
+
+                  // Process the final response
+                  if (finalResponse) {
+                    // Print the response text if there is any
+                    if (finalResponse.text && finalResponse.text.trim()) {
+                      console.log('\n' + chalk[responseColor](finalResponse.text));
+                    }
+
+                    // Add the final response to the conversation
+                    conversation.push({
+                      role: 'assistant',
+                      content: finalResponse.text,
+                      metadata: {
+                        originalResponse: finalResponse,
+                      },
+                    });
+
+                    // Log the final response
+                    logger.logConversation(`AI (final): ${finalResponse.text}`);
+
+                    // If there are more tool calls, process them recursively
+                    if (
+                      finalResponse.toolCalls &&
+                      finalResponse.toolCalls.length > 0 &&
+                      finalResponse.stopReason === 'tool_use'
+                    ) {
+                      console.log(chalk[infoColor]('Continuing with next tool call...'));
+
+                      // Recursively handle the next set of tool calls
+                      await handleToolCallsRecursively(finalResponse);
+                    }
+                  }
+                }
+              } catch (error) {
+                const errorMessage = (error as Error).message;
+                console.error(
+                  chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
+                );
+              }
+            }
+          }
+
           // Streaming setup
           const handleChunk = (chunk: string) => {
             // Print chunk without a newline
@@ -337,7 +463,7 @@ export async function startRepl(): Promise<void> {
             responseContent += chunk;
           };
 
-          // Complete response handler
+          // Complete response handler - now properly awaits all tool calls
           const handleComplete = async (response: {
             text: string;
             toolCalls: any[];
@@ -369,299 +495,23 @@ export async function startRepl(): Promise<void> {
               compactConversationHistory();
             }
 
-            // Process tool calls if any
+            // Process tool calls if any - awaiting the complete tool processing chain
             if (response.toolCalls && response.toolCalls.length > 0) {
-              for (const toolCall of response.toolCalls) {
-                // Log the tool call
-                logger.logAction(`Executing tool: ${toolCall.name}`);
-                analytics.trackToolUsage(toolCall.name);
-
-                try {
-                  // Execute the tool and get result
-                  const result = await executeTool(toolCall, toolContext);
-
-                  // Log the tool execution
-                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
-
-                  // Add tool result to conversation history as a user message
-                  conversation.push({
-                    role: 'user',
-                    content: `Tool result for ${toolCall.name}: ${JSON.stringify(result.result || {})}`,
-                    metadata: {
-                      isToolResult: true,
-                      toolName: toolCall.name,
-                      toolResult: result,
-                    },
-                  });
-
-                  // Check if we should complete the tool cycle by sending result back to Claude
-                  const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
-                  const isToolUse = response.stopReason === 'tool_use';
-
-                  // Only send tool results back to Claude if:
-                  // 1. The complete tool cycle feature is enabled
-                  // 2. The stop reason is 'tool_use'
-                  // 3. There's a toolUseId available
-                  // 4. We have a valid tool result
-                  if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
-                    console.log(chalk[infoColor]('Sending tool result back to Claude...'));
-
-                    // IMPORTANT: We use a non-blocking pattern here to avoid hanging the REPL.
-                    // Tool result processing and the final Claude response will happen asynchronously
-                    // while the REPL continues to be responsive to user input.
-                    // This means the final Claude response will appear after the next prompt.
-
-                    // Import the sendToolResultToAI function from the AI API
-                    const { sendToolResultToAI } = await import('./api/ai.js');
-
-                    // Create a specialized conversation copy with the right format
-                    const specialConversation: any[] = [];
-
-                    // First, add all messages up to but not including the last assistant message
-                    for (let i = 0; i < conversation.length - 1; i++) {
-                      specialConversation.push({
-                        role: conversation[i].role,
-                        content: conversation[i].content,
-                      });
-                    }
-
-                    // Add the last assistant message with tool_use content
-                    specialConversation.push({
-                      role: 'assistant',
-                      content: response.toolCalls.map((call) => ({
-                        type: 'tool_use',
-                        id: response.toolUseId,
-                        name: call.name,
-                        input: call.parameters,
-                      })),
-                    });
-
-                    console.log(chalk[infoColor]('Sending tool result back to Claude...'));
-
-                    // Set a flag to indicate that we're in the middle of a tool cycle
-                    let toolCycleInProgress = true;
-
-                    // Send the tool result back to Claude using the specialized conversation
-                    sendToolResultToAI(specialConversation as any, result, response.toolUseId, {})
-                      .then((finalResponse) => {
-                        // Process the final response
-                        if (finalResponse) {
-                          // Check if the final response includes more tool calls
-                          const hasMoreToolCalls =
-                            finalResponse.toolCalls && finalResponse.toolCalls.length > 0;
-
-                          // Print the response text if there is any
-                          if (finalResponse.text && finalResponse.text.trim()) {
-                            console.log('\n' + chalk[responseColor](finalResponse.text));
-                          }
-
-                          // Add the final response to the conversation
-                          conversation.push({
-                            role: 'assistant',
-                            content: finalResponse.text,
-                            metadata: {
-                              originalResponse: finalResponse,
-                            },
-                          });
-
-                          // Log the final response
-                          logger.logConversation(`AI (final): ${finalResponse.text}`);
-
-                          // If there are more tool calls, process them instead of returning to prompt
-                          if (hasMoreToolCalls && finalResponse.stopReason === 'tool_use') {
-                            console.log(chalk[infoColor]('Continuing with next tool call...'));
-
-                            // Process the tool calls from the final response
-                            processToolCalls(finalResponse);
-                          } else {
-                            // No more tool calls, return to REPL prompt
-                            toolCycleInProgress = false;
-                            // Print a new prompt after the response is added
-                            process.stdout.write(chalk[promptColor](promptStyle));
-                          }
-                        } else {
-                          toolCycleInProgress = false;
-                          // Print a new prompt if there's no final response
-                          process.stdout.write(chalk[promptColor](promptStyle));
-                        }
-                      })
-                      .catch((toolResultError) => {
-                        toolCycleInProgress = false;
-
-                        console.error(
-                          chalk[errorColor](
-                            `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
-                          ),
-                        );
-                        // Print a new prompt after the error
-                        process.stdout.write(chalk[promptColor](promptStyle));
-                      });
-                  }
-                } catch (error) {
-                  const errorMessage = (error as Error).message;
-                  console.error(
-                    chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
-                  );
-                }
-              }
+              await handleToolCallsRecursively(response);
             }
           };
 
-          // Stream the response
-          await streamAI(conversation, handleChunk, handleComplete as (response: any) => void);
+          // Stream the response and await the FULL completion (including tool calls)
+          const aiResponse = await streamAI(conversation, handleChunk, handleComplete);
 
           // Add a newline after streaming completes
           console.log('');
 
-          // The streamAI handleComplete function might trigger async operations
-          // like sending tool results, but the main REPL loop doesn't wait for those.
-          // This is intentional - the tool result processing will happen in the background
-          // while the REPL returns to allow the user to continue.
+          // If the response had tool calls, they have been fully processed by now
         } catch (error) {
           console.error(chalk[errorColor](`Error: ${(error as Error).message}`));
           logger.logError((error as Error).message, 'REPL Error');
         }
-      }
-
-      // Define processToolCalls function inside replLoop to access all variables
-      function processToolCalls(response: any) {
-        if (!response || !response.toolCalls || response.toolCalls.length === 0) {
-          // No tool calls to process, return to prompt
-          process.stdout.write(chalk[promptColor](promptStyle));
-          return;
-        }
-
-        // Process each tool call sequentially
-        const processNextTool = async (index = 0) => {
-          if (index >= response.toolCalls.length) {
-            // All tools processed, we're done with this cycle
-            return;
-          }
-
-          const toolCall = response.toolCalls[index];
-          // Log the tool call
-          logger.logAction(`Executing tool: ${toolCall.name}`);
-          analytics.trackToolUsage(toolCall.name);
-
-          try {
-            // Execute the tool and get result
-            const result = await executeTool(toolCall, toolContext);
-
-            // Log the tool execution
-            console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
-
-            // Add tool result to conversation history as a user message
-            conversation.push({
-              role: 'user',
-              content: `Tool result for ${toolCall.name}: ${JSON.stringify(result.result || {})}`,
-              metadata: {
-                isToolResult: true,
-                toolName: toolCall.name,
-                toolResult: result,
-              },
-            });
-
-            // Check if we should complete the tool cycle by sending result back to Claude
-            const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
-            const isToolUse = response.stopReason === 'tool_use';
-
-            // Only send tool results back to Claude if:
-            // 1. The complete tool cycle feature is enabled
-            // 2. The stop reason is 'tool_use'
-            // 3. There's a toolUseId available
-            // 4. We have a valid tool result
-            if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
-              console.log(chalk[infoColor]('Sending tool result back to Claude...'));
-
-              // Create a specialized conversation copy with the right format
-              const specialConversation: any[] = [];
-
-              // First, add all messages up to but not including the last assistant message
-              for (let i = 0; i < conversation.length - 1; i++) {
-                specialConversation.push({
-                  role: conversation[i].role,
-                  content: conversation[i].content,
-                });
-              }
-
-              // Add the last assistant message with tool_use content
-              specialConversation.push({
-                role: 'assistant',
-                content: response.toolCalls.map((call: any) => ({
-                  type: 'tool_use',
-                  id: response.toolUseId,
-                  name: call.name,
-                  input: call.parameters,
-                })),
-              });
-
-              // Import the sendToolResultToAI function if needed
-              const { sendToolResultToAI } = await import('./api/ai.js');
-
-              // Send the tool result back to Claude
-              const finalResponse = await sendToolResultToAI(
-                specialConversation as any,
-                result,
-                response.toolUseId,
-                {},
-              );
-
-              // Process the final response
-              if (finalResponse) {
-                // Check if there are more tool calls
-                const hasMoreToolCalls =
-                  finalResponse.toolCalls && finalResponse.toolCalls.length > 0;
-
-                // Print the response text if any
-                if (finalResponse.text && finalResponse.text.trim()) {
-                  console.log('\n' + chalk[responseColor](finalResponse.text));
-                }
-
-                // Add the final response to the conversation
-                conversation.push({
-                  role: 'assistant',
-                  content: finalResponse.text,
-                  metadata: {
-                    originalResponse: finalResponse,
-                  },
-                });
-
-                // Log the final response
-                logger.logConversation(`AI (final): ${finalResponse.text}`);
-
-                // If there are more tool calls, recursively process them
-                if (hasMoreToolCalls && finalResponse.stopReason === 'tool_use') {
-                  console.log(chalk[infoColor]('Continuing with next tool call...'));
-                  processToolCalls(finalResponse);
-                } else {
-                  // No more tool calls, return to the prompt
-                  process.stdout.write(chalk[promptColor](promptStyle));
-                }
-              } else {
-                // No response, return to the prompt
-                process.stdout.write(chalk[promptColor](promptStyle));
-              }
-            } else if (result.success) {
-              // Process the next tool in the batch
-              processNextTool(index + 1);
-            } else {
-              // Tool execution failed, return to the prompt
-              console.error(
-                chalk[errorColor](`Error executing tool ${toolCall.name}: ${result.error}`),
-              );
-              process.stdout.write(chalk[promptColor](promptStyle));
-            }
-          } catch (error) {
-            const errorMessage = (error as Error).message;
-            console.error(
-              chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
-            );
-            process.stdout.write(chalk[promptColor](promptStyle));
-          }
-        };
-
-        // Start processing tools
-        processNextTool();
       }
 
       // Continue the REPL loop
