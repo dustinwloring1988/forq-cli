@@ -380,12 +380,23 @@ export async function startRepl(): Promise<void> {
                   // Execute the tool and get result
                   const result = await executeTool(toolCall, toolContext);
 
+                  // Log the tool execution
+                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+
+                  // Add tool result to conversation history as a user message
+                  conversation.push({
+                    role: 'user',
+                    content: `Tool result for ${toolCall.name}: ${JSON.stringify(result.result || {})}`,
+                    metadata: {
+                      isToolResult: true,
+                      toolName: toolCall.name,
+                      toolResult: result,
+                    },
+                  });
+
                   // Check if we should complete the tool cycle by sending result back to Claude
                   const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
                   const isToolUse = response.stopReason === 'tool_use';
-
-                  // Log the tool execution
-                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
 
                   // Only send tool results back to Claude if:
                   // 1. The complete tool cycle feature is enabled
@@ -539,13 +550,27 @@ export async function startRepl(): Promise<void> {
             // Log the tool execution
             console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
 
-            if (
-              result.success &&
-              index === response.toolCalls.length - 1 &&
-              response.stopReason === 'tool_use' &&
-              response.toolUseId
-            ) {
-              // This was the last tool call in this batch, send result back to Claude
+            // Add tool result to conversation history as a user message
+            conversation.push({
+              role: 'user',
+              content: `Tool result for ${toolCall.name}: ${JSON.stringify(result.result || {})}`,
+              metadata: {
+                isToolResult: true,
+                toolName: toolCall.name,
+                toolResult: result,
+              },
+            });
+
+            // Check if we should complete the tool cycle by sending result back to Claude
+            const completeToolCycle = config.api?.anthropic?.completeToolCycle !== false;
+            const isToolUse = response.stopReason === 'tool_use';
+
+            // Only send tool results back to Claude if:
+            // 1. The complete tool cycle feature is enabled
+            // 2. The stop reason is 'tool_use'
+            // 3. There's a toolUseId available
+            // 4. We have a valid tool result
+            if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
               console.log(chalk[infoColor]('Sending tool result back to Claude...'));
 
               // Create a specialized conversation copy with the right format
