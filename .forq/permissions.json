@@ -21,6 +21,21 @@
         "scope": "test.txt",
         "timestamp": 1741131852486
       }
+    ],
+    "deleteFile": [
+      {
+        "type": "file_system",
+        "granted": true,
+        "scope": "./test.txt",
+        "timestamp": 1741132947992
+      }
+    ],
+    "bash": [
+      {
+        "type": "shell_command",
+        "granted": true,
+        "timestamp": 1741133287243
+      }
     ]
   }
 }

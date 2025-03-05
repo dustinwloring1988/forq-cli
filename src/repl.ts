@@ -371,9 +371,6 @@ export async function startRepl(): Promise<void> {
 
             // Process tool calls if any
             if (response.toolCalls && response.toolCalls.length > 0) {
-              // New flag to track if we should continue agent execution
-              let shouldContinueExecution = true;
-
               for (const toolCall of response.toolCalls) {
                 // Log the tool call
                 logger.logAction(`Executing tool: ${toolCall.name}`);
@@ -390,11 +387,6 @@ export async function startRepl(): Promise<void> {
                   // Log the tool execution
                   console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
 
-                  // Tool execution failed - should stop the execution loop
-                  if (!result.success) {
-                    shouldContinueExecution = false;
-                  }
-
                   // Only send tool results back to Claude if:
                   // 1. The complete tool cycle feature is enabled
                   // 2. The stop reason is 'tool_use'
@@ -402,6 +394,11 @@ export async function startRepl(): Promise<void> {
                   // 4. We have a valid tool result
                   if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
                     console.log(chalk[infoColor]('Sending tool result back to Claude...'));
+
+                    // IMPORTANT: We use a non-blocking pattern here to avoid hanging the REPL.
+                    // Tool result processing and the final Claude response will happen asynchronously
+                    // while the REPL continues to be responsive to user input.
+                    // This means the final Claude response will appear after the next prompt.
 
                     // Import the sendToolResultToAI function from the AI API
                     const { sendToolResultToAI } = await import('./api/ai.js');
@@ -428,60 +425,43 @@ export async function startRepl(): Promise<void> {
                       })),
                     });
 
-                    try {
-                      // CHANGE: Make this synchronous (await) instead of asynchronous
-                      // so the REPL doesn't immediately return to the prompt
-                      const finalResponse = await sendToolResultToAI(
-                        specialConversation as any,
-                        result,
-                        response.toolUseId,
-                        {},
-                      );
+                    // Send the tool result back to Claude using the specialized conversation
+                    // Note: We're deliberately not awaiting this call so that the REPL can continue
+                    sendToolResultToAI(specialConversation as any, result, response.toolUseId, {})
+                      .then((finalResponse) => {
+                        // Process the final response
+                        if (finalResponse) {
+                          // Print the response
+                          console.log('\n' + chalk[responseColor](finalResponse.text));
 
-                      // Process the final response
-                      if (finalResponse) {
-                        // Print the response
-                        console.log('\n' + chalk[responseColor](finalResponse.text));
+                          // Add the final response to the conversation
+                          conversation.push({
+                            role: 'assistant',
+                            content: finalResponse.text,
+                          });
 
-                        // Add the final response to the conversation
-                        conversation.push({
-                          role: 'assistant',
-                          content: finalResponse.text,
-                        });
+                          // Log the final response
+                          logger.logConversation(`AI (final): ${finalResponse.text}`);
 
-                        // Log the final response
-                        logger.logConversation(`AI (final): ${finalResponse.text}`);
-
-                        // CHANGE: Check if we have more tool calls and should continue execution
-                        if (
-                          finalResponse.toolCalls &&
-                          finalResponse.toolCalls.length > 0 &&
-                          shouldContinueExecution
-                        ) {
-                          // Process the new tool calls by recursively executing them
-                          console.log(
-                            chalk[infoColor]('Continuing execution with more tool calls...'),
-                          );
-
-                          // Recursive call to handle tool calls
-                          await handleComplete(finalResponse);
+                          // Print a new prompt after the response is added
+                          process.stdout.write(chalk[promptColor](promptStyle));
                         }
-                      }
-                    } catch (toolResultError) {
-                      console.error(
-                        chalk[errorColor](
-                          `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
-                        ),
-                      );
-                      shouldContinueExecution = false;
-                    }
+                      })
+                      .catch((toolResultError) => {
+                        console.error(
+                          chalk[errorColor](
+                            `Error sending tool result to Claude: ${(toolResultError as Error).message}`,
+                          ),
+                        );
+                        // Print a new prompt after the error
+                        process.stdout.write(chalk[promptColor](promptStyle));
+                      });
                   }
                 } catch (error) {
                   const errorMessage = (error as Error).message;
                   console.error(
                     chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
                   );
-                  shouldContinueExecution = false;
                 }
               }
             }
