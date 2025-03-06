@@ -4,7 +4,7 @@
  */
 
 import * as readline from 'readline';
-import { PermissionType } from './permissions';
+import { PermissionType, resolvePermissionRequest } from './permissions';
 import { logger } from './logger';
 
 // Create readline interface for user input
@@ -57,11 +57,13 @@ const permissionDescriptions: Record<PermissionType, string> = {
 
 /**
  * Asks the user for permission to perform a sensitive operation
+ * This is the UI-facing part of the permission system
  *
  * @param toolName Name of the tool requesting permission
  * @param permissionType Type of permission being requested
  * @param scope Optional scope for the permission (e.g. directory path)
  * @param reason Optional reason for requesting permission
+ * @param requestId Optional ID for the permission request (for resolving pending permission)
  * @returns Promise resolving to boolean indicating if permission was granted
  */
 export async function requestPermission(
@@ -69,6 +71,7 @@ export async function requestPermission(
   permissionType: PermissionType,
   scope?: string,
   reason?: string,
+  requestId?: string,
 ): Promise<boolean> {
   const description = permissionDescriptions[permissionType] || permissionType;
   const scopeText = scope ? ` in "${scope}"` : '';
@@ -79,12 +82,17 @@ export async function requestPermission(
   console.log('\n'); // Add some spacing
   const result = await confirmPrompt(question, false);
 
-  logger.logAction('Permission Request', {
+  logger.logAction('Permission Request Response', {
     tool: toolName,
     type: permissionType,
     scope: scope || 'global',
     granted: result,
   });
+
+  // If this request has an ID, resolve the pending promise
+  if (requestId) {
+    resolvePermissionRequest(requestId, result);
+  }
 
   return result;
 }

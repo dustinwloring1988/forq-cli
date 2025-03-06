@@ -6,7 +6,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Tool, ToolCall, ToolContext, ToolParameters, ToolResult } from '../types/tools';
 import { logger } from '../utils/logger';
-import { hasPermission, grantPermission, PermissionType } from '../utils/permissions';
+import {
+  hasPermission,
+  grantPermission,
+  PermissionType,
+  requestPermissionAndWait,
+} from '../utils/permissions';
 import { requestPermission } from '../utils/prompt';
 
 // Store for registered tools
@@ -198,33 +203,25 @@ async function checkToolPermission(tool: Tool, parameters: ToolParameters): Prom
   const permissionType = getPermissionTypeForTool(tool.name);
   const scope = getPermissionScope(tool.name, parameters);
 
-  // Check if permission already granted
-  if (hasPermission(tool.name, permissionType, scope)) {
-    logger.logAction('Permission Check', {
-      tool: tool.name,
-      type: permissionType,
-      scope: scope || 'global',
-      result: 'Already granted',
-    });
-    return true;
-  }
-
-  // Request permission from user
-  // TODO: Extract scope-appropriate reason from parameters
+  // Use the new promise-based permission system
+  // This will wait for user permission if needed
   let reason: string | undefined;
   if (tool.name === 'bash') {
     reason = `Execute command: ${parameters.command}`;
   }
 
-  const granted = await requestPermission(tool.name, permissionType, scope, reason);
+  // This will handle showing the prompt to the user and waiting for response
+  const hasPermission = await requestPermissionAndWait(tool.name, permissionType, scope, reason);
 
-  if (granted) {
-    // Save permission if granted
-    grantPermission(tool.name, permissionType, scope);
-    return true;
+  if (!hasPermission) {
+    logger.logAction('Permission Denied', {
+      tool: tool.name,
+      type: permissionType,
+      scope: scope || 'global',
+    });
   }
 
-  return false;
+  return hasPermission;
 }
 
 /**

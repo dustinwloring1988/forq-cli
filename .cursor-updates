@@ -67,3 +67,8 @@
 - Replaced .then() usage with async/await throughout the codebase for more predictable control flow.
 - Ensured the REPL prompt is not displayed until the entire chain of tool calls and AI responses is fully completed.
 - Improved streaming implementation to ensure proper handling of tool calls while maintaining a responsive user interface.
+
+## 2025-03-05
+
+- Implemented a robust promise-based permission system that properly awaits user confirmation before proceeding with tool execution.
+- Fixed critical bug in tool permission handling that was causing the app to crash when requesting permission for createFile operations.

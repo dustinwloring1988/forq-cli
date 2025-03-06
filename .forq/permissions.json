@@ -26,6 +26,18 @@
         "granted": true,
         "scope": "hello.js",
         "timestamp": 1741148444696
+      },
+      {
+        "type": "file_system",
+        "granted": true,
+        "scope": "tests/utils/logger.test.ts",
+        "timestamp": 1741219199931
+      },
+      {
+        "type": "file_system",
+        "granted": true,
+        "scope": "tests/utils/config.test.ts",
+        "timestamp": 1741219249495
       }
     ],
     "deleteFile": [

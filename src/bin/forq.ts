@@ -318,6 +318,68 @@ program
     }
   });
 
+// Add a diagnostic command
+program
+  .command('diagnose')
+  .description('Run diagnostics to check installation and environment')
+  .action(() => {
+    console.log('\nForq CLI Diagnostics');
+    console.log('===================\n');
+
+    console.log(`Version: ${packageJson.version}`);
+    console.log(`Node version: ${process.version}`);
+    console.log(`Platform: ${process.platform} (${process.arch})`);
+
+    console.log('\nEnvironment:');
+    console.log(`  HOME: ${process.env.HOME}`);
+    console.log(`  PATH: ${process.env.PATH}`);
+
+    console.log('\nNPM Configuration:');
+    try {
+      const { execSync } = require('child_process');
+      const npmPrefix = execSync('npm config get prefix').toString().trim();
+      console.log(`  npm prefix: ${npmPrefix}`);
+      console.log(`  npm bin location: ${npmPrefix}/bin`);
+
+      // Check if npm bin is in PATH
+      const isInPath = process.env.PATH?.includes(npmPrefix);
+      console.log(`  npm bin in PATH: ${isInPath ? 'Yes' : 'No'}`);
+
+      if (!isInPath) {
+        console.log('\nWarning: npm bin directory not found in PATH');
+        console.log(
+          'To fix this, add the following to your shell profile (.bashrc, .zshrc, etc.):',
+        );
+        console.log(`  export PATH="${npmPrefix}/bin:$PATH"`);
+      }
+    } catch (error) {
+      console.log(`  Error getting npm config: ${(error as Error).message}`);
+    }
+
+    console.log('\nBinary Location:');
+    console.log(`  Package location: ${__dirname}`);
+
+    console.log('\nAPI Configuration:');
+    const globalConfigPath = getGlobalConfigPath();
+    console.log(`  Global config path: ${globalConfigPath}`);
+    console.log(`  Global config exists: ${fs.existsSync(globalConfigPath) ? 'Yes' : 'No'}`);
+
+    const projectConfigPath = getProjectConfigPath();
+    console.log(`  Project config path: ${projectConfigPath}`);
+    console.log(`  Project config exists: ${fs.existsSync(projectConfigPath) ? 'Yes' : 'No'}`);
+
+    if (!fs.existsSync(globalConfigPath) && !fs.existsSync(projectConfigPath)) {
+      console.log('\nNo configuration files found. To create a default configuration, run:');
+      console.log('  forq config --global --init');
+    }
+
+    console.log('\nAvailable Commands:');
+    console.log('  forq repl             Start an interactive REPL session');
+    console.log('  forq config           View or edit configuration');
+    console.log('  forq log              View application logs');
+    console.log('  forq help             Display help for a command');
+  });
+
 // Parse command line arguments
 program.parse(process.argv);
 

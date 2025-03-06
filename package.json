@@ -15,9 +15,20 @@
     "start": "node dist/src/bin/forq.js",
     "prepare": "npm run build",
     "repl": "node dist/src/bin/forq.js repl",
-    "global-install": "npm run build && npm link"
+    "global-install": "npm run build && npm i -g .",
+    "postinstall": "node scripts/postinstall.js"
   },
-  "keywords": [],
+  "keywords": [
+    "cli",
+    "ai",
+    "coding",
+    "terminal",
+    "assistant"
+  ],
+  "preferGlobal": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "author": "",
   "license": "ISC",
   "devDependencies": {

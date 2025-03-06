@@ -5,25 +5,47 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import * as dotenv from 'dotenv';
-import { Message as ForqMessage } from '../types/messages';
-import { logger } from '../utils/logger';
-import { getToolsSchema } from '../tools';
+import {
+  Message as ForqMessage,
+  ContentBlock,
+  ThinkingBlock,
+  RedactedThinkingBlock,
+} from '../types/messages';
 import { ToolCall, ToolResult } from '../types/tools';
+import { getToolsSchema } from '../tools';
+import { logger } from '../utils/logger';
+import chalk from 'chalk';
 
 // Load environment variables
 dotenv.config();
 
-// Validate API key
+// Set up Anthropic client with API key
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (!apiKey) {
-  console.error('Error: ANTHROPIC_API_KEY environment variable is not set');
+  console.error(
+    chalk.red('Error: ANTHROPIC_API_KEY environment variable is required. Set it in .env file.'),
+  );
   process.exit(1);
 }
 
-// Initialize Anthropic client
 const anthropic = new Anthropic({
   apiKey,
 });
+
+/**
+ * Find the last index in an array that satisfies the predicate function
+ * @param array The array to search
+ * @param predicate Function to test each element
+ * @returns Index of the last element that satisfies the predicate, or -1 if none found
+ */
+function findLastIndex<T>(array: T[], predicate: (item: T, index: number) => boolean): number {
+  for (let i = array.length - 1; i >= 0; i--) {
+    if (predicate(array[i], i)) {
+      return i;
+    }
+  }
+  return -1;
+}
 
 /**
  * Configuration options for AI requests
@@ -32,15 +54,23 @@ export interface AIOptions {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  thinking?: {
+    enabled?: boolean;
+    budgetTokens?: number;
+  };
 }
 
 /**
  * Default AI configuration
  */
 const DEFAULT_AI_OPTIONS: AIOptions = {
-  model: 'claude-3-opus-20240229',
-  maxTokens: 4000,
-  temperature: 0.7,
+  model: 'claude-3-7-sonnet-20250219',
+  maxTokens: 64000,
+  temperature: 1,
+  thinking: {
+    enabled: false,
+    budgetTokens: 32000,
+  },
 };
 
 /**
@@ -70,6 +100,66 @@ function convertToAnthropicMessages(
       content: msg.content,
     };
 
+    // If the content is a string but appears to be a JSON array, try to parse it
+    // This handles cases where thinking blocks are stored as a JSON string
+    if (
+      typeof msg.content === 'string' &&
+      (msg.content.startsWith('[') || msg.content.startsWith('{'))
+    ) {
+      try {
+        const parsedContent = JSON.parse(msg.content);
+        if (Array.isArray(parsedContent)) {
+          anthropicMsg.content = parsedContent;
+          if (debug) {
+            logger.logAction('Parsed JSON Content', {
+              role: msg.role,
+              contentTypes: parsedContent.map((item) => item.type).join(','),
+            });
+          }
+        }
+      } catch (error) {
+        // If parsing fails, keep the original string content
+        if (debug) {
+          logger.logAction('Failed to parse JSON content', { error: (error as Error).message });
+        }
+      }
+    }
+
+    // If the message has metadata with original content (which may contain thinking blocks),
+    // use that content instead. This is critical for preserving thinking blocks.
+    if (msg.metadata?.originalContent) {
+      const originalContent = msg.metadata.originalContent;
+      if (Array.isArray(originalContent)) {
+        anthropicMsg.content = originalContent;
+        if (debug) {
+          logger.logAction('Using Original Content from Metadata', {
+            role: msg.role,
+            contentTypes: originalContent.map((item) => item.type).join(','),
+          });
+        }
+      }
+    }
+
+    // Check for original response in metadata
+    if (msg.metadata?.originalResponse) {
+      const originalResponse = msg.metadata.originalResponse;
+      if (
+        originalResponse.text &&
+        Array.isArray(originalResponse.text) &&
+        originalResponse.text.some(
+          (block: any) => block.type === 'thinking' || block.type === 'redacted_thinking',
+        )
+      ) {
+        anthropicMsg.content = originalResponse.text;
+        if (debug) {
+          logger.logAction('Using Original Response Text with Thinking Blocks', {
+            role: msg.role,
+            contentTypes: originalResponse.text.map((item: any) => item.type).join(','),
+          });
+        }
+      }
+    }
+
     result.push(anthropicMsg);
   }
 
@@ -88,7 +178,99 @@ function convertToAnthropicMessages(
  */
 function extractSystemMessage(messages: ForqMessage[]): string | undefined {
   const systemMessage = messages.find((msg) => msg.role === 'system');
-  return systemMessage?.content;
+  if (!systemMessage) return undefined;
+
+  // Handle case where content might be an array of ContentBlock
+  if (typeof systemMessage.content === 'string') {
+    return systemMessage.content;
+  }
+
+  // System messages should always have string content, but handle the case
+  // where it might somehow be an array
+  return undefined;
+}
+
+/**
+ * Extract thinking blocks from a message's content
+ * @param content The message content (string or ContentBlock[])
+ * @returns Array of thinking blocks, or empty array if none found
+ */
+function extractThinkingBlocks(
+  content: string | ContentBlock[],
+): (ThinkingBlock | RedactedThinkingBlock)[] {
+  // If content is a string, try to parse it as JSON
+  if (typeof content === 'string') {
+    try {
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+        ) as (ThinkingBlock | RedactedThinkingBlock)[];
+      }
+    } catch (error) {
+      // If parsing fails, return empty array
+      return [];
+    }
+  }
+
+  // If content is already an array, filter out thinking blocks
+  if (Array.isArray(content)) {
+    return content.filter(
+      (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+    ) as (ThinkingBlock | RedactedThinkingBlock)[];
+  }
+
+  return [];
+}
+
+/**
+ * Extract thinking blocks from the last assistant message in a conversation
+ * @param messages The conversation messages
+ * @returns Array of thinking blocks, or empty array if none found
+ */
+function extractLastAssistantThinkingBlocks(
+  messages: ForqMessage[],
+): (ThinkingBlock | RedactedThinkingBlock)[] {
+  // Find the last assistant message
+  const lastAssistantIndex = [...messages].reverse().findIndex((msg) => msg.role === 'assistant');
+  if (lastAssistantIndex === -1) return [];
+
+  // Get the message
+  const lastAssistantMessage = messages[messages.length - 1 - lastAssistantIndex];
+
+  // Check metadata first
+  if (lastAssistantMessage.metadata?.originalContent) {
+    const originalContent = lastAssistantMessage.metadata.originalContent;
+    return extractThinkingBlocks(originalContent);
+  }
+
+  // Check original response in metadata
+  if (lastAssistantMessage.metadata?.originalResponse?.text) {
+    return extractThinkingBlocks(lastAssistantMessage.metadata.originalResponse.text);
+  }
+
+  // Check the content directly
+  return extractThinkingBlocks(lastAssistantMessage.content);
+}
+
+/**
+ * Ensure thinking blocks are correctly ordered before other content types
+ * @param content Array of content blocks
+ * @returns Reordered content blocks with thinking blocks first
+ */
+function ensureCorrectBlockOrder(content: ContentBlock[]): ContentBlock[] {
+  if (!content || !Array.isArray(content) || content.length <= 1) return content;
+
+  // Separate blocks by type
+  const thinkingBlocks = content.filter(
+    (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+  );
+  const toolUseBlocks = content.filter((block) => block.type === 'tool_use');
+  const toolResultBlocks = content.filter((block) => block.type === 'tool_result');
+  const textBlocks = content.filter((block) => block.type === 'text');
+
+  // Return in correct order: thinking blocks → tool_use blocks → tool_result blocks → text blocks
+  return [...thinkingBlocks, ...toolUseBlocks, ...toolResultBlocks, ...textBlocks];
 }
 
 /**
@@ -127,13 +309,14 @@ function extractToolCallsFromResponse(response: Anthropic.Message): ToolCall[] {
 }
 
 /**
- * Response object that includes both text and tool calls
+ * Parsed response from an AI request
  */
 export interface AIResponse {
   text: string;
   toolCalls: ToolCall[];
   stopReason: string | null;
   toolUseId?: string;
+  metadata?: Record<string, any>;
 }
 
 /**
@@ -153,14 +336,27 @@ export async function queryAI(messages: ForqMessage[], options?: AIOptions): Pro
       ...options,
     };
 
-    const response = await anthropic.messages.create({
+    // Build API request parameters
+    const requestParams: any = {
       model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
       max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
-      temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
       tools: convertToAnthropicTools(getToolsSchema()),
-    });
+    };
+
+    // If thinking is enabled, set temperature to 1 as required by the API
+    if (mergedOptions.thinking?.enabled && mergedOptions.thinking.budgetTokens) {
+      requestParams.thinking = {
+        type: 'enabled',
+        budget_tokens: mergedOptions.thinking.budgetTokens,
+      };
+      requestParams.temperature = 1; // Must be 1 when thinking is enabled
+    } else {
+      requestParams.temperature = mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!;
+    }
+
+    const response = await anthropic.beta.messages.create(requestParams);
 
     // Extract text from the response
     const responseText = response.content
@@ -216,48 +412,87 @@ export async function streamAI(
       ...options,
     };
 
-    const response = await anthropic.messages.create({
+    // Build API request parameters
+    const requestParams: any = {
       model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
       max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
-      temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
       tools: convertToAnthropicTools(getToolsSchema()),
-    });
+    };
 
-    // For tool calls, we need the complete response which doesn't work well with streaming
-    // Extract text content
-    const responseText = response.content
-      .map((c) => {
-        if (c.type === 'text') {
-          return c.text;
-        }
-        return '';
-      })
-      .join('');
-
-    // Send chunks of text to the callback
-    // This simulates streaming for compatibility
-    const chunkSize = 10;
-    for (let i = 0; i < responseText.length; i += chunkSize) {
-      const chunk = responseText.substring(i, i + chunkSize);
-      onChunk(chunk);
-      // Small delay to simulate streaming
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    // If thinking is enabled, set temperature to 1 as required by the API
+    if (mergedOptions.thinking?.enabled && mergedOptions.thinking.budgetTokens) {
+      requestParams.thinking = {
+        type: 'enabled',
+        budget_tokens: mergedOptions.thinking.budgetTokens,
+      };
+      requestParams.temperature = 1; // Must be 1 when thinking is enabled
+      logger.logAction('Enabled Extended Thinking', {
+        budgetTokens: mergedOptions.thinking.budgetTokens,
+      });
+    } else {
+      requestParams.temperature = mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!;
     }
 
-    // Extract tool calls
-    const toolCalls = extractToolCallsFromResponse(response);
+    // Get the stream with Anthropic SDK
+    const stream = await anthropic.beta.messages.stream(requestParams);
 
-    logger.logConversation(`AI Response: ${responseText}`);
+    // Track response data for the final AIResponse
+    let fullResponseText = '';
+    let stopReason: string | null = null;
+    let finalToolCalls: ToolCall[] = [];
+    let toolUseId: string | undefined = undefined;
 
+    // Process the stream
+    for await (const chunk of stream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+        const textChunk = chunk.delta.text;
+        onChunk(textChunk);
+        fullResponseText += textChunk;
+      }
+    }
+
+    // Get the final message once streaming is complete
+    const finalMessage = await stream.finalMessage();
+    stopReason = finalMessage.stop_reason;
+
+    // Extract tool calls from final message
+    finalToolCalls = extractToolCallsFromResponse(finalMessage);
+    toolUseId =
+      finalToolCalls.length > 0
+        ? finalMessage.content.find((c) => c.type === 'tool_use')?.id
+        : undefined;
+
+    // Check if there are thinking blocks
+    const hasThinkingBlocks = finalMessage.content.some(
+      (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+    );
+
+    logger.logConversation(`AI Response: ${fullResponseText}`);
+    if (hasThinkingBlocks) {
+      logger.logAction('Message Contains Thinking Blocks', {
+        blocks: finalMessage.content.map((block) => block.type).join(','),
+      });
+    }
+
+    // Create the AI response
     const aiResponse: AIResponse = {
-      text: responseText,
-      toolCalls,
-      stopReason: response.stop_reason,
-      toolUseId:
-        toolCalls.length > 0 ? response.content.find((c) => c.type === 'tool_use')?.id : undefined,
+      text: fullResponseText,
+      toolCalls: finalToolCalls,
+      stopReason,
+      toolUseId,
     };
+
+    // If thinking is enabled or there are tool calls, store the original content in metadata
+    if (hasThinkingBlocks || finalToolCalls.length > 0) {
+      // Create a new metadata object if it doesn't exist
+      if (!aiResponse.metadata) {
+        aiResponse.metadata = {};
+      }
+      // Store the original content in metadata
+      aiResponse.metadata.originalContent = finalMessage.content;
+    }
 
     if (onComplete) {
       await onComplete(aiResponse);
@@ -297,24 +532,99 @@ export async function sendToolResultToAI(
   options?: AIOptions,
 ): Promise<AIResponse> {
   try {
+    // If the tool result indicates a permission error, handle it specially
+    if (!toolResult.success && toolResult.error?.includes('Permission denied')) {
+      logger.logAction('Tool Permission Denied', {
+        toolName: toolResult.toolName,
+        error: toolResult.error,
+      });
+
+      return {
+        text: `The tool execution was stopped because permission was denied: ${toolResult.error}`,
+        toolCalls: [],
+        stopReason: 'permission_denied',
+      };
+    }
+
     // Enable debug mode to troubleshoot message conversion
     const debug = true;
 
-    // Filter out any messages with empty content before conversion
-    const validMessages = messages.filter((msg) => msg.content || msg.role === 'system');
+    // Extract thinking blocks from the last assistant message
+    const thinkingBlocks = extractLastAssistantThinkingBlocks(messages);
 
-    // Convert messages with debug enabled
-    const anthropicMessages = convertToAnthropicMessages(validMessages, debug);
-    const systemPrompt = extractSystemMessage(validMessages);
+    if (thinkingBlocks.length > 0) {
+      logger.logAction('Found Thinking Blocks in Last Assistant Message', {
+        count: thinkingBlocks.length,
+        types: thinkingBlocks.map((block) => block.type).join(','),
+      });
+    }
 
-    // Merge default options with provided options
+    // Find the last AI response in the messages
+    const lastAssistantMessageIndex = findLastIndex(messages, (msg) => msg.role === 'assistant');
+
+    // Check if the last assistant message has originalContent from a previous response
+    const lastAssistantMessage =
+      lastAssistantMessageIndex >= 0 ? messages[lastAssistantMessageIndex] : undefined;
+
+    // Check for originalContent in metadata (where thinking blocks would be stored)
+    const originalContent = lastAssistantMessage?.metadata?.originalContent;
+
+    if (originalContent) {
+      logger.logAction('Found Original Content in Metadata', {
+        contentTypes: Array.isArray(originalContent)
+          ? originalContent.map((block: any) => block.type).join(',')
+          : 'unknown',
+      });
+    }
+
+    // Create a copy of messages to modify
+    const messagesCopy = [...messages];
+
+    // If thinking is enabled and we found thinking blocks, ensure they're properly included in the assistant message
     const mergedOptions = {
       ...DEFAULT_AI_OPTIONS,
       ...options,
     };
+    const thinkingEnabled = mergedOptions.thinking?.enabled === true;
 
-    // Create tool result message
-    const toolResultMessage = {
+    if (thinkingEnabled && lastAssistantMessageIndex >= 0) {
+      // If we have original content, use it
+      if (originalContent && Array.isArray(originalContent)) {
+        messagesCopy[lastAssistantMessageIndex] = {
+          ...messagesCopy[lastAssistantMessageIndex],
+          content: originalContent,
+          metadata: {
+            ...messagesCopy[lastAssistantMessageIndex].metadata,
+            hasThinkingBlocks: true,
+          },
+        };
+      }
+      // If we don't have original content but we have extracted thinking blocks,
+      // ensure content is an array and starts with thinking blocks
+      else if (
+        thinkingBlocks.length > 0 &&
+        typeof messagesCopy[lastAssistantMessageIndex].content === 'string'
+      ) {
+        // Convert string content to an array with thinking blocks first
+        messagesCopy[lastAssistantMessageIndex] = {
+          ...messagesCopy[lastAssistantMessageIndex],
+          content: [
+            ...thinkingBlocks,
+            {
+              type: 'text',
+              text: messagesCopy[lastAssistantMessageIndex].content as string,
+            },
+          ],
+          metadata: {
+            ...messagesCopy[lastAssistantMessageIndex].metadata,
+            hasThinkingBlocks: true,
+          },
+        };
+      }
+    }
+
+    // Create tool result message - important: don't include thinking blocks here
+    const toolResultMessage: ForqMessage = {
       role: 'user',
       content: [
         {
@@ -328,6 +638,16 @@ export async function sendToolResultToAI(
       ],
     };
 
+    // Add tool result message to the copy
+    messagesCopy.push(toolResultMessage);
+
+    // Filter out any messages with empty content before conversion
+    const validMessages = messagesCopy.filter((msg) => msg.content || msg.role === 'system');
+
+    // Convert messages with debug enabled
+    const anthropicMessages = convertToAnthropicMessages(validMessages, debug);
+    const systemPrompt = extractSystemMessage(validMessages);
+
     // Log the tool result
     logger.logAction('Tool Result', {
       toolUseId,
@@ -339,48 +659,73 @@ export async function sendToolResultToAI(
     // Log the messages being sent to help with debugging
     logger.logAction('Sending Messages to API', {
       messageCount: anthropicMessages.length,
-      lastMessage: JSON.stringify(anthropicMessages[anthropicMessages.length - 1]),
-      hasToolUse: anthropicMessages.some(
+      lastAssistantHasThinking: anthropicMessages.some(
         (msg) =>
+          msg.role === 'assistant' &&
           msg.content &&
           Array.isArray(msg.content) &&
-          msg.content.some((block) => block.type === 'tool_use'),
+          msg.content.some(
+            (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+          ),
       ),
     });
 
-    // Add the tool result message to the conversation
-    anthropicMessages.push(toolResultMessage as any);
-
-    // Send to Anthropic API
-    const response = await anthropic.messages.create({
+    // Build API request parameters
+    const requestParams: any = {
       model: mergedOptions.model || DEFAULT_AI_OPTIONS.model!,
       max_tokens: mergedOptions.maxTokens || DEFAULT_AI_OPTIONS.maxTokens!,
-      temperature: mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!,
       messages: anthropicMessages,
       system: systemPrompt,
       tools: convertToAnthropicTools(getToolsSchema()),
-    });
+      stream: true, // Enable streaming to avoid timeout issues
+    };
 
-    // Extract text content
-    const responseText = response.content
-      .map((c) => {
-        if (c.type === 'text') {
-          return c.text;
-        }
-        return '';
-      })
-      .join('');
+    // If thinking is enabled, set temperature to 1 as required by the API
+    if (mergedOptions.thinking?.enabled && mergedOptions.thinking.budgetTokens) {
+      requestParams.thinking = {
+        type: 'enabled',
+        budget_tokens: mergedOptions.thinking.budgetTokens,
+      };
+      requestParams.temperature = 1; // Must be 1 when thinking is enabled
+    } else {
+      requestParams.temperature = mergedOptions.temperature || DEFAULT_AI_OPTIONS.temperature!;
+    }
 
-    // Extract tool calls
-    const toolCalls = extractToolCallsFromResponse(response);
+    // Use streaming API and collect the entire response
+    const stream = await anthropic.beta.messages.stream(requestParams);
 
-    logger.logConversation(`AI Response after tool result: ${responseText}`);
+    // Track response data for the final AIResponse
+    let fullResponseText = '';
+    let stopReason: string | null = null;
+    let finalToolCalls: ToolCall[] = [];
+    let responseToolUseId: string | undefined = undefined;
+
+    // Process the stream
+    for await (const chunk of stream) {
+      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+        const textChunk = chunk.delta.text;
+        fullResponseText += textChunk;
+      }
+    }
+
+    // Get the final message once streaming is complete
+    const finalMessage = await stream.finalMessage();
+    stopReason = finalMessage.stop_reason;
+
+    // Extract tool calls from final message
+    finalToolCalls = extractToolCallsFromResponse(finalMessage);
+    responseToolUseId =
+      finalToolCalls.length > 0
+        ? finalMessage.content.find((c) => c.type === 'tool_use')?.id
+        : undefined;
+
+    logger.logConversation(`AI Response after tool result: ${fullResponseText}`);
+
     return {
-      text: responseText,
-      toolCalls,
-      stopReason: response.stop_reason,
-      toolUseId:
-        toolCalls.length > 0 ? response.content.find((c) => c.type === 'tool_use')?.id : undefined,
+      text: fullResponseText,
+      toolCalls: finalToolCalls,
+      stopReason,
+      toolUseId: responseToolUseId,
     };
   } catch (error) {
     logger.logError(error as Error, 'AI Tool Result Error');

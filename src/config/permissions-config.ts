@@ -89,14 +89,25 @@ export function initializePermissionConfig(): void {
  */
 export function savePermissionConfig(): void {
   try {
+    // Ensure config directories exist first
+    ensureConfigDirs();
+
     // Save global permissions
-    savePermissionsToFile(GLOBAL_PERMISSIONS_FILE);
-    logger.logAction('Permissions Config', { status: 'Saved global permissions' });
+    try {
+      savePermissionsToFile(GLOBAL_PERMISSIONS_FILE);
+      logger.logAction('Permissions Config', { status: 'Saved global permissions' });
+    } catch (globalError) {
+      logger.logError(globalError as Error, 'Failed to save global permissions');
+    }
 
     // Save project-specific permissions
-    const projectPermissionsPath = getProjectPermissionsPath();
-    savePermissionsToFile(projectPermissionsPath);
-    logger.logAction('Permissions Config', { status: 'Saved project permissions' });
+    try {
+      const projectPermissionsPath = getProjectPermissionsPath();
+      savePermissionsToFile(projectPermissionsPath);
+      logger.logAction('Permissions Config', { status: 'Saved project permissions' });
+    } catch (projectError) {
+      logger.logError(projectError as Error, 'Failed to save project permissions');
+    }
   } catch (error) {
     logger.logError(error as Error, 'Failed to save permissions');
   }

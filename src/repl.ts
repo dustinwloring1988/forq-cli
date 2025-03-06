@@ -145,6 +145,7 @@ export async function startRepl(): Promise<void> {
   /**
    * Compacts the conversation history to reduce token usage
    * Keeps the system prompt, summarizes older messages, and preserves recent messages
+   * Preserves thinking blocks in assistant messages
    */
   function compactConversationHistory(): void {
     if (conversation.length <= 2) {
@@ -166,24 +167,70 @@ export async function startRepl(): Promise<void> {
     const messagesToSummarize = conversation.slice(1, -keepCount);
     const messagesToKeep = conversation.slice(-keepCount);
 
+    // Extract thinking blocks from assistant messages to preserve them
+    const assistantThinkingBlocks: Record<number, any[]> = {};
+
+    messagesToSummarize.forEach((msg, index) => {
+      if (msg.role === 'assistant' && msg.metadata?.originalContent) {
+        const content = msg.metadata.originalContent;
+        if (Array.isArray(content)) {
+          const thinkingContent = content.filter(
+            (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+          );
+
+          if (thinkingContent.length > 0) {
+            assistantThinkingBlocks[index + 1] = thinkingContent; // +1 to account for system message
+            logger.logAction('Preserved Thinking Blocks', {
+              index: index + 1,
+              count: thinkingContent.length,
+              types: thinkingContent.map((block) => block.type).join(','),
+            });
+          }
+        }
+      }
+    });
+
     // Create a summary message
     const summaryContent =
       `[This is a summary of ${messagesToSummarize.length} earlier messages in the conversation]\n\n` +
       messagesToSummarize
-        .map((msg) => {
-          return `${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}: ${
-            msg.content.length > 100 ? msg.content.substring(0, 100) + '...' : msg.content
-          }`;
+        .map((msg, index) => {
+          let contentSummary = '';
+          if (typeof msg.content === 'string') {
+            contentSummary =
+              msg.content.length > 100 ? msg.content.substring(0, 100) + '...' : msg.content;
+          } else if (Array.isArray(msg.content)) {
+            // For array content (like thinking blocks), just note the types present
+            contentSummary = `[Content with ${msg.content.length} blocks: ${msg.content
+              .map((block) => block.type)
+              .join(', ')}]`;
+
+            // Note if thinking blocks are being preserved
+            if (assistantThinkingBlocks[index + 1]) {
+              contentSummary += ` (${assistantThinkingBlocks[index + 1].length} thinking blocks preserved)`;
+            }
+          }
+
+          return `${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}: ${contentSummary}`;
         })
         .join('\n\n');
 
     // Create a new conversation with: system prompt, summary message, and recent messages
     conversation.length = 0;
     conversation.push(systemPrompt);
+
+    // Add summary message with metadata about preserved thinking
     conversation.push({
       role: 'system',
       content: summaryContent,
+      metadata: {
+        compactedConversation: true,
+        preservedThinkingBlocks: Object.keys(assistantThinkingBlocks).length > 0,
+        assistantThinkingBlocks: assistantThinkingBlocks,
+      },
     });
+
+    // Add the recent messages to keep
     messagesToKeep.forEach((msg) => conversation.push(msg));
 
     console.log(
@@ -357,7 +404,15 @@ export async function startRepl(): Promise<void> {
                 const result = await executeTool(toolCall, toolContext);
 
                 // Log the tool execution
-                console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+                if (result.success) {
+                  console.log(chalk.cyan(`Tool ${toolCall.name} executed successfully`));
+                } else if (result.error && result.error.includes('Permission denied')) {
+                  console.log(
+                    chalk.yellow(`Tool ${toolCall.name} permission denied: ${result.error}`),
+                  );
+                  // Break the tool call loop when permission is denied
+                  break;
+                }
 
                 // Add tool result to conversation history as a user message
                 conversation.push({
@@ -380,7 +435,7 @@ export async function startRepl(): Promise<void> {
                 // 3. There's a toolUseId available
                 // 4. We have a valid tool result
                 if (completeToolCycle && isToolUse && response.toolUseId && result.success) {
-                  console.log(chalk[infoColor]('Sending tool result back to Claude...'));
+                  // console.log(chalk[infoColor]('Sending tool result back to Claude...'));
 
                   // Import the sendToolResultToAI function from the AI API
                   const { sendToolResultToAI } = await import('./api/ai.js');
@@ -440,10 +495,18 @@ export async function startRepl(): Promise<void> {
                       finalResponse.toolCalls.length > 0 &&
                       finalResponse.stopReason === 'tool_use'
                     ) {
-                      console.log(chalk[infoColor]('Continuing with next tool call...'));
+                      // console.log(chalk[infoColor]('Continuing with next tool call...'));
 
                       // Recursively handle the next set of tool calls
                       await handleToolCallsRecursively(finalResponse);
+                    }
+
+                    // If permission was denied, stop processing further tool calls
+                    if (finalResponse.stopReason === 'permission_denied') {
+                      console.log(
+                        chalk[infoColor]('Tool execution stopped due to permission denial.'),
+                      );
+                      break;
                     }
                   }
                 }
@@ -452,14 +515,46 @@ export async function startRepl(): Promise<void> {
                 console.error(
                   chalk[errorColor](`Error executing tool ${toolCall.name}: ${errorMessage}`),
                 );
+
+                // Add the error to conversation history
+                conversation.push({
+                  role: 'user',
+                  content: `Tool error for ${toolCall.name}: ${errorMessage}`,
+                  metadata: {
+                    isToolResult: true,
+                    toolName: toolCall.name,
+                    toolResult: {
+                      toolName: toolCall.name,
+                      success: false,
+                      error: errorMessage,
+                    },
+                  },
+                });
+
+                // Break the tool call loop when an error occurs
+                // This prevents further tool calls from being processed until the user provides input
+                break;
               }
             }
           }
 
           // Streaming setup
           const handleChunk = (chunk: string) => {
-            // Print chunk without a newline
-            process.stdout.write(chunk);
+            // Detect if this chunk might be part of a thinking block
+            const isThinkingContent =
+              responseContent.includes('"type":"thinking"') ||
+              chunk.includes('"type":"thinking"') ||
+              responseContent.includes('thinking about this');
+
+            // Use a lighter color for thinking content
+            if (isThinkingContent) {
+              // Use a lighter shade of the prompt color
+              process.stdout.write(chalk.gray(chunk));
+            } else {
+              // Print regular chunk without a newline
+              process.stdout.write(chunk);
+            }
+
             responseContent += chunk;
           };
 

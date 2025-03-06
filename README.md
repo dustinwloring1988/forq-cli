@@ -6,7 +6,7 @@ A terminal-based AI coding agent powered by Anthropic's Claude and OpenAI models
 
 ### Prerequisites
 
-- Node.js (v16 or higher)
+- Node.js (v18 or higher)
 - npm or yarn
 - API key for Anthropic Claude and/or OpenAI (depending on which model you want to use)
 
@@ -16,8 +16,11 @@ A terminal-based AI coding agent powered by Anthropic's Claude and OpenAI models
 # Install globally
 npm install -g forq-cli
 
-# Or, use npx
-npx forq-cli
+# Verify installation
+forq --version
+
+# Start the REPL
+forq repl
 ```
 
 ### Install from source
@@ -33,9 +36,60 @@ npm install
 # Build the project
 npm run build
 
-# Link it globally (optional)
-npm link
+# Install globally
+npm run global-install
+# OR
+npm install -g .
 ```
+
+### Troubleshooting Installation
+
+If you encounter issues with global installation:
+
+1. **Command not found after installation**:
+
+   - Check your global npm directory is in your PATH:
+
+     ```bash
+     # Find npm global prefix
+     npm config get prefix
+
+     # Make sure the bin directory under this path is in your PATH
+     echo $PATH
+     ```
+
+   - Add the npm bin directory to your PATH if needed:
+
+     ```bash
+     # For bash (add to .bashrc or .bash_profile)
+     export PATH="$(npm config get prefix)/bin:$PATH"
+
+     # For zsh (add to .zshrc)
+     export PATH="$(npm config get prefix)/bin:$PATH"
+     ```
+
+2. **Permission issues**:
+
+   ```bash
+   # Install with sudo (if necessary)
+   sudo npm install -g forq-cli
+   ```
+
+3. **Running without installing**:
+
+   ```bash
+   # Run directly using npx
+   npx forq-cli repl
+
+   # Or use the provided shell wrapper (from source)
+   ./bin/forq repl
+   ```
+
+4. **Using the diagnostic tool**:
+   ```bash
+   # Check installation and environment
+   forq diagnose
+   ```
 
 ## Configuration
 
