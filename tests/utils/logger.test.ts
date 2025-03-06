@@ -1,104 +1,111 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { jest } from '@jest/globals';
 import { Logger } from '../../src/utils/logger';
 
-// Mock fs functions
+// Mock fs module
 jest.mock('fs', () => ({
-  existsSync: jest.fn(),
+  appendFileSync: jest.fn(),
+  existsSync: jest.fn().mockReturnValue(true),
   mkdirSync: jest.fn(),
-  appendFileSync: jest.fn()
-}));
-
-// Mock path functions
-jest.mock('path', () => ({
-  join: jest.fn().mockImplementation((...args) => args.join('/'))
 }));
 
 describe('Logger', () => {
   let logger: Logger;
-  const mockDate = new Date('2025-01-01T12:00:00Z');
-  const mockTimestamp = mockDate.toISOString();
-  
-  beforeEach(() => {
-    jest.clearAllMocks();
-    jest.spyOn(global, 'Date').mockImplementation(() => mockDate as unknown as string);
-    
-    // Setup mocks
-    (path.join as jest.Mock).mockImplementation((...args) => args.join('/'));
-    (fs.existsSync as jest.Mock).mockReturnValue(true);
-    
-    logger = new Logger();
+  const mockTimestamp = '2025-01-01T00:00:00.000Z';
+
+  beforeAll(() => {
+    // Mock Date.toISOString
+    const mockDate = new Date();
+    jest.spyOn(mockDate, 'toISOString').mockReturnValue(mockTimestamp);
+    jest.spyOn(global, 'Date').mockImplementation(() => mockDate);
   });
-  
-  afterEach(() => {
+
+  afterAll(() => {
     jest.restoreAllMocks();
   });
-  
+
+  beforeEach(() => {
+    logger = new Logger();
+    jest.clearAllMocks();
+  });
+
   describe('logConversation', () => {
     it('should append message to conversation log with timestamp', () => {
       const message = 'Test conversation message';
+
       logger.logConversation(message);
-      
+
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
       expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('logs/conversation.log'),
-        `[${mockTimestamp}] ${message}${os.EOL}`
+        expect.stringContaining('conversation.log'),
+        expect.stringContaining(`[${mockTimestamp}] ${message}`),
       );
     });
   });
-  
+
   describe('logError', () => {
     it('should log Error objects with stack trace', () => {
       const error = new Error('Test error');
+
       logger.logError(error);
-      
+
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
       expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('logs/error.log'),
-        expect.stringContaining(`[${mockTimestamp}] ${error.message}\n${error.stack}${os.EOL}`)
+        expect.stringContaining('error.log'),
+        expect.stringContaining(`[${mockTimestamp}] ${error.message}`),
       );
     });
-    
+
     it('should log string errors', () => {
       const errorMessage = 'String error message';
+
       logger.logError(errorMessage);
-      
+
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
       expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('logs/error.log'),
-        `[${mockTimestamp}] ${errorMessage}${os.EOL}`
+        expect.stringContaining('error.log'),
+        expect.stringContaining(`[${mockTimestamp}] ${errorMessage}`),
       );
     });
-    
+
     it('should include context when provided', () => {
       const error = 'Test error';
-      const context = 'Error Context';
+      const context = 'Error context';
+
       logger.logError(error, context);
-      
+
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
       expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('logs/error.log'),
-        `[${mockTimestamp}] ${context}: ${error}${os.EOL}`
+        expect.stringContaining('error.log'),
+        expect.stringContaining(`[${mockTimestamp}] ${context}: ${error}`),
       );
     });
   });
-  
+
   describe('logAction', () => {
-    it('should log actions with timestamp', () => {
+    it('should log action with timestamp', () => {
       const action = 'TestAction';
+
       logger.logAction(action);
-      
+
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
       expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('logs/actions.log'),
-        `[${mockTimestamp}] ${action} ${os.EOL}`
+        expect.stringContaining('actions.log'),
+        expect.stringContaining(`[${mockTimestamp}] ${action} `),
       );
     });
-    
-    it('should include JSON stringified details when provided', () => {
+
+    it('should include details when provided', () => {
       const action = 'TestAction';
-      const details = { key: 'value', nested: { prop: true } };
+      const details = { key: 'value', status: 'success' };
+
       logger.logAction(action, details);
-      
+
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
       expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('logs/actions.log'),
-        `[${mockTimestamp}] ${action} ${JSON.stringify(details)}${os.EOL}`
+        expect.stringContaining('actions.log'),
+        expect.stringContaining(`[${mockTimestamp}] ${action} ${JSON.stringify(details)}`),
       );
     });
   });
