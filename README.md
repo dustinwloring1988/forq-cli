@@ -1,5 +1,8 @@
 # Forq CLI
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![GitHub issues](https://img.shields.io/github/issues/kleneway/forq-cli)](https://github.com/kleneway/forq-cli/issues)
+
 A terminal-based AI coding agent powered by Anthropic's Claude and OpenAI models, designed to assist with coding tasks directly from your terminal.
 
 ## Video Walkthrough
@@ -10,13 +13,15 @@ This repository was built as part of my "Let's Build Cursor" AI Coding tutorial 
 
 [See the Final Working Coding Agent Add Tests](https://youtu.be/gvpxq1hqzXY?si=vKs9F6iRx1799A_c&t=3346)
 
-## Installation
+## Installation 
+#### ⚠️ Important Note
+I built this mostly for educational purposes and have not tested these steps! Please let me know if these work for you and ideally submit a PR to update these instructions. 🙏
 
 ### Prerequisites
 
 - Node.js (v18 or higher)
 - npm or yarn
-- API key for Anthropic Claude and/or OpenAI (depending on which model you want to use)
+- API key for Anthropic Claude and OpenAI (OpenAI key is optional, only used for semantic search embeddings)
 
 ### Install from npm
 
@@ -35,7 +40,7 @@ forq repl
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/forq-cli.git
+git clone https://github.com/kleneway/forq-cli.git
 cd forq-cli
 
 # Install dependencies
@@ -146,7 +151,7 @@ Set configuration values:
 forq config --global --key apiKeys.anthropic --value "your-api-key"
 
 # Set preferred model
-forq config --global --key preferences.model --value "claude-3-opus-20240229"
+forq config --global --key preferences.model --value "claude-3-7-sonnet-20250219"
 ```
 
 ## Usage
@@ -196,10 +201,21 @@ forq repl
 
 For more detailed documentation, see the [docs](./docs) directory:
 
-- [Tool Overview](./docs/tool-overview.md)
-- [Technical Details](./docs/technical-details.md)
-- [Semantic Search](./docs/semantic-search.md)
+- [Test Commands to Try](./docs/test-commands.md)
+- [CLI Command Overview](./docs/cli-commands.md)
+- [Config Example - similar to cursorrules](./docs/FORQ.md.example)
+- [Example Workflows](./docs/example-workflows.md)
 
 ## License
 
-ISC
+MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
