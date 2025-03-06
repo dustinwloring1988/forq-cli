@@ -2,6 +2,13 @@
 
 A terminal-based AI coding agent powered by Anthropic's Claude and OpenAI models, designed to assist with coding tasks directly from your terminal.
 
+## Video Walkthrough
+
+This repository was built as part of my "Let's Build Cursor" AI Coding tutorial series. 
+
+[Watch the Full Video](https://youtu.be/gvpxq1hqzXY)
+[See the Final Working Coding Agent Add Tests](https://youtu.be/gvpxq1hqzXY?si=vKs9F6iRx1799A_c&t=3346)
+
 ## Installation
 
 ### Prerequisites
