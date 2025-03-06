@@ -9,7 +9,6 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint . --ext .ts",
     "format": "prettier --write \"**/*.{ts,json,md}\"",
     "test": "jest",
     "start": "node dist/src/bin/forq.js",
