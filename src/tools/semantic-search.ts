@@ -7,13 +7,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Tool, ToolContext, ToolParameters } from '../types/tools';
 import cosineSimilarity from 'cosine-similarity';
-import { createEmbedding } from './semantic-embed';
+import { OllamaEmbeddings } from '../embeddings/ollama';
 import * as glob from 'glob';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
 // Convert exec to promise-based
 const execAsync = promisify(exec);
+
+// Initialize the OllamaEmbeddings instance
+const ollamaEmbeddings = new OllamaEmbeddings();
 
 /**
  * Type definition for code snippets with embeddings
@@ -109,44 +112,55 @@ async function ensureCodebaseEmbeddings(codebase: string, logger: any): Promise<
   logger.logAction('Generating Codebase Embeddings', { codebase });
   const snippets = await extractCodeSnippets(codebase, logger);
 
-  const codeSnippets: CodeSnippet[] = [];
-  for (const { filePath, content } of snippets) {
-    try {
-      const id = path.relative(process.cwd(), filePath);
-      // Skip if content is too large
-      if (content.length > 8000) {
-        // For large files, we'd ideally split them into logical chunks
-        // For simplicity in this implementation, we'll just take the first 8000 chars
-        const truncatedContent = content.substring(0, 8000);
-        const vector = await createEmbedding(truncatedContent);
-        codeSnippets.push({
-          id,
-          filePath,
-          code: truncatedContent,
-          vector,
-        });
-      } else {
-        const vector = await createEmbedding(content);
-        codeSnippets.push({
-          id,
-          filePath,
-          code: content,
-          vector,
-        });
-      }
-    } catch (error) {
-      logger.logError(error as Error, `Failed to embed snippet: ${filePath}`);
+  // Gather all texts to be embedded
+  const textsToEmbed: string[] = [];
+  const textIndices: { [index: number]: { filePath: string; code: string } } = {};
+  
+  for (let i = 0; i < snippets.length; i++) {
+    const { filePath, content } = snippets[i];
+    // Skip if content is too large
+    if (content.length > 8000) {
+      // For large files, we'd ideally split them into logical chunks
+      // For simplicity, we'll just take the first 8000 chars
+      const truncatedContent = content.substring(0, 8000);
+      textsToEmbed.push(truncatedContent);
+      textIndices[textsToEmbed.length - 1] = { filePath, code: truncatedContent };
+    } else {
+      textsToEmbed.push(content);
+      textIndices[textsToEmbed.length - 1] = { filePath, code: content };
     }
   }
-
-  // Save embeddings
+  
   try {
-    fs.writeFileSync(embeddingsFile, JSON.stringify(codeSnippets, null, 2));
+    // Generate embeddings in batch for better performance
+    logger.logAction('Generating Embeddings', { count: textsToEmbed.length, batchSize: 5 });
+    const vectors = await ollamaEmbeddings.generateEmbeddingsBatch(textsToEmbed);
+    
+    // Create code snippets with embeddings
+    const codeSnippets: CodeSnippet[] = [];
+    for (let i = 0; i < vectors.length; i++) {
+      const { filePath, code } = textIndices[i];
+      const id = path.relative(process.cwd(), filePath);
+      codeSnippets.push({
+        id,
+        filePath,
+        code,
+        vector: vectors[i],
+      });
+    }
+    
+    // Save embeddings
+    try {
+      fs.writeFileSync(embeddingsFile, JSON.stringify(codeSnippets, null, 2));
+    } catch (error) {
+      logger.logError(error as Error, `Failed to save embeddings: ${embeddingsFile}`);
+    }
+    
+    return codeSnippets;
   } catch (error) {
-    logger.logError(error as Error, `Failed to save embeddings: ${embeddingsFile}`);
+    logger.logError(error as Error, `Failed to generate batch embeddings`);
+    throw error;
   }
-
-  return codeSnippets;
 }
 
 /**
@@ -166,15 +180,18 @@ async function performSemanticSearch(
     return [];
   }
 
-  // Create embedding for the query
-  const queryVector = await createEmbedding(query);
+  // Create embedding for the query using Ollama
+  const queryVector = await ollamaEmbeddings.generateEmbedding(query);
 
-  // Calculate similarity scores
-  const similarities = snippets.map((snippet) => ({
-    snippetObj: snippet,
-    filePath: snippet.filePath,
-    similarity: cosineSimilarity([queryVector], [snippet.vector])[0],
-  }));
+  // Calculate similarity scores using ollamaEmbeddings' public vector similarity method
+  const similarities = snippets.map((snippet) => {
+    const similarity = ollamaEmbeddings.calculateVectorSimilarity(queryVector, snippet.vector);
+    return {
+      snippetObj: snippet,
+      filePath: snippet.filePath,
+      similarity,
+    };
+  });
 
   // Sort by similarity (descending)
   similarities.sort((a, b) => b.similarity - a.similarity);
@@ -193,7 +210,7 @@ async function performSemanticSearch(
 export const tool: Tool = {
   name: 'semanticSearch',
   description:
-    'Returns semantically relevant code snippets based on a natural language query. This tool uses embeddings to find code that matches the meaning of your query.',
+    'Returns semantically relevant code snippets based on a natural language query. This tool uses local embeddings to find code that matches the meaning of your query.',
   parameterSchema: {
     type: 'object',
     properties: {

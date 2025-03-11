@@ -47,6 +47,30 @@ EXAMPLES
   > Create a new React component for user profile
 `,
 
+  self: `
+DESCRIPTION
+  Start an interactive session in self-hosted mode using Ollama.
+  
+  This mode uses locally running Ollama models for all AI operations,
+  which provides enhanced privacy and offline capabilities.
+
+USAGE
+  $ forq self [OPTIONS]
+
+OPTIONS
+  -v, --verbose       Enable verbose output (including debug information)
+
+SPECIAL COMMANDS
+  /help    - Show available commands
+  /clear   - Clear the conversation history
+  /exit    - Exit the session
+  /compact - Compact conversation history to save tokens
+
+EXAMPLES
+  $ forq self
+  $ forq self --verbose
+`,
+
   log: `
 DESCRIPTION
   View logs from the application.
@@ -122,6 +146,23 @@ program
       await startRepl();
     } catch (error) {
       console.error('Error starting REPL:', (error as Error).message);
+      process.exit(1);
+    }
+  });
+
+// Implement the self command
+program
+  .command('self')
+  .description('Start self-hosted mode using Ollama')
+  .option('-v, --verbose', 'Enable verbose output')
+  .action(async (options) => {
+    console.log('Initializing self-hosted mode...');
+    try {
+      // Dynamically import the self mode module to avoid circular dependencies
+      const { startSelfMode } = await import('../modes/self');
+      await startSelfMode(options);
+    } catch (error) {
+      console.error('Error in self-hosted mode:', (error as Error).message);
       process.exit(1);
     }
   });

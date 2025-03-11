@@ -80,4 +80,11 @@ Added detailed breakdown of Ollama integration task into three main sections:
 
 - Added Ollama configuration to ForqConfig interface and default settings
 - Added Ollama API client with model management, completion, and embedding functionality
-- Implemented Ollama embeddings module with caching and similarity search functionality
+
+## 2024-03-14
+
+- Implemented Self Mode Command Setup with `forq self` command to enable local Ollama-based operation.
+- Created `src/modes/self.ts` with complete command parsing, validation, and integration with Ollama client.
+- Added special command handling (/help, /clear, /exit, /compact, /status) for self-hosted mode.
+- Implemented tool call parsing and validation to enable tool usage with local Ollama models.
+- Updated CLI help documentation with detailed description of self mode features and usage examples.
