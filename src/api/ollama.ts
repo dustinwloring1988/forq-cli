@@ -73,6 +73,19 @@ export class OllamaClient {
   }
 
   /**
+   * Check if Ollama server is running
+   */
+  async ping(): Promise<boolean> {
+    try {
+      await axios.get(`${this.baseURL}/api/version`);
+      return true;
+    } catch (error) {
+      logger.logError(error as Error, 'Failed to ping Ollama server');
+      return false;
+    }
+  }
+
+  /**
    * List available models
    */
   async listModels(): Promise<OllamaModelInfo[]> {

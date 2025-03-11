@@ -38,8 +38,19 @@ const MAX_CONVERSATION_LENGTH = 20;
  */
 async function initializeOllamaClient(): Promise<OllamaClient> {
   try {
+    logger.logAction('initializeOllamaClient', { status: 'starting' });
     const config = getConfig();
     const ollamaClient = new OllamaClient();
+    
+    // Check if Ollama is running
+    try {
+      await ollamaClient.ping();
+    } catch (error) {
+      logger.logError(error as Error, 'Ollama server not running');
+      throw new Error(
+        'Ollama server is not running. Please start Ollama first with `ollama serve` and try again.'
+      );
+    }
     
     // Check if the configured LLM model is available
     if (config.api?.ollama?.model) {
@@ -47,12 +58,30 @@ async function initializeOllamaClient(): Promise<OllamaClient> {
       const isModelAvailable = await ollamaClient.isModelAvailable(model);
       
       if (!isModelAvailable) {
+        logger.logAction('pullModel', { model, status: 'starting' });
         console.log(chalk.yellow(`Model ${model} not found. Attempting to pull it...`));
-        await ollamaClient.pullModel(model);
-        console.log(chalk.green(`Successfully pulled model ${model}`));
+        try {
+          await ollamaClient.pullModel(model);
+          logger.logAction('pullModel', { model, status: 'completed' });
+          console.log(chalk.green(`Successfully pulled model ${model}`));
+        } catch (pullError) {
+          logger.logError(pullError as Error, `Failed to pull model ${model}`);
+          throw new Error(
+            `Failed to pull model ${model}. Please check your internet connection and try again.`
+          );
+        }
       } else {
+        logger.logAction('modelCheck', { model, status: 'available' });
         console.log(chalk.green(`Using model ${model}`));
       }
+    } else {
+      // If no model is configured, use a default model
+      const defaultModel = 'llama2';
+      logger.logAction('modelCheck', { status: 'no model configured', using: defaultModel });
+      console.log(chalk.yellow(`No model configured. Using default model: ${defaultModel}`));
+      config.api = config.api || {};
+      config.api.ollama = config.api.ollama || {};
+      config.api.ollama.model = defaultModel;
     }
     
     // Check if the configured embedding model is available
@@ -61,30 +90,100 @@ async function initializeOllamaClient(): Promise<OllamaClient> {
       const isEmbeddingModelAvailable = await ollamaClient.isModelAvailable(embeddingModel);
       
       if (!isEmbeddingModelAvailable) {
+        logger.logAction('pullModel', { model: embeddingModel, type: 'embedding', status: 'starting' });
         console.log(chalk.yellow(`Embedding model ${embeddingModel} not found. Attempting to pull it...`));
-        await ollamaClient.pullModel(embeddingModel);
-        console.log(chalk.green(`Successfully pulled embedding model ${embeddingModel}`));
+        try {
+          await ollamaClient.pullModel(embeddingModel);
+          logger.logAction('pullModel', { model: embeddingModel, type: 'embedding', status: 'completed' });
+          console.log(chalk.green(`Successfully pulled embedding model ${embeddingModel}`));
+        } catch (pullError) {
+          // If embedding model fails, we can continue without it
+          logger.logError(pullError as Error, `Failed to pull embedding model ${embeddingModel}`);
+          console.log(chalk.yellow(
+            `Warning: Failed to pull embedding model. Some features like semantic search may be limited.`
+          ));
+        }
       } else {
+        logger.logAction('modelCheck', { model: embeddingModel, type: 'embedding', status: 'available' });
         console.log(chalk.green(`Using embedding model ${embeddingModel}`));
       }
     }
     
+    logger.logAction('initializeOllamaClient', { status: 'completed' });
     return ollamaClient;
   } catch (error) {
     logger.logError(error as Error, 'Failed to initialize Ollama client');
-    throw new Error(`Failed to initialize Ollama: ${(error as Error).message}`);
+    throw error;
   }
 }
 
 /**
  * Format messages for Ollama
+ * Improves message formatting for better context and role handling
  */
 function formatMessagesForOllama(messages: Message[]): string {
-  // Simple format that concatenates all messages with roles as prefixes
-  return messages.map(msg => {
-    const role = msg.role.charAt(0).toUpperCase() + msg.role.slice(1);
-    return `${role}: ${msg.content}`;
-  }).join('\n\n');
+  // Start with a consistent format
+  let formattedPrompt = '';
+  
+  // Process messages in order, with appropriate role prefixes
+  for (const msg of messages) {
+    // Skip empty messages
+    if (!msg.content) {
+      continue;
+    }
+    
+    // Get the content as string
+    let contentText: string;
+    if (typeof msg.content === 'string') {
+      contentText = msg.content;
+    } else {
+      // Convert content blocks to text
+      contentText = msg.content.map(block => {
+        if (block.type === 'text') {
+          return block.text;
+        } else if (block.type === 'tool_result') {
+          return block.content;
+        } else if (block.type === 'thinking') {
+          return block.thinking;
+        } else if (block.type === 'redacted_thinking') {
+          return block.data;
+        } else if (block.type === 'tool_use') {
+          return `${block.name}: ${JSON.stringify(block.input)}`;
+        }
+        return '';
+      }).join('\n');
+    }
+    
+    // Skip if content is empty after processing
+    if (!contentText.trim()) {
+      continue;
+    }
+    
+    // Format based on role
+    switch (msg.role) {
+      case 'system':
+        // System messages are prefixed with clear markers
+        formattedPrompt += `<system>\n${contentText.trim()}\n</system>\n\n`;
+        break;
+      case 'user':
+        // For user messages, use a standard format
+        formattedPrompt += `User: ${contentText.trim()}\n\n`;
+        break;
+      case 'assistant':
+        // For assistant responses
+        formattedPrompt += `Assistant: ${contentText.trim()}\n\n`;
+        break;
+      default:
+        // Default case for any other role types (for future compatibility)
+        // This is a safeguard as our type definition should restrict roles to system/user/assistant
+        formattedPrompt += `Message: ${contentText.trim()}\n\n`;
+    }
+  }
+
+  // Add a consistent assistant prefix for the response
+  formattedPrompt += 'Assistant: ';
+  
+  return formattedPrompt;
 }
 
 /**
@@ -98,6 +197,8 @@ function processSpecialCommands(
   verbose: boolean = false
 ): { wasCommand: boolean; result?: string } {
   const trimmedInput = input.trim();
+  
+  logger.logAction('processCommand', { command: trimmedInput });
 
   // Handle help command
   if (trimmedInput === '/help') {
@@ -121,6 +222,7 @@ function processSpecialCommands(
     conversation.length = 0;
     conversation.push(...systemMessages);
     
+    logger.logAction('clearConversation', { keptSystemMessages: systemMessages.length });
     return {
       wasCommand: true,
       result: chalk.green('Conversation history cleared (kept system messages).'),
@@ -255,284 +357,372 @@ function validateToolCall(toolName: string, args: Record<string, any>): {
 }
 
 /**
+ * Manage conversation history to optimize context window usage
+ */
+function manageConversationHistory(
+  conversation: Message[],
+  maxContextLength: number = 8192,
+  verbose: boolean = false
+): Message[] {
+  // Keep track of estimated token count for managing context window size
+  // This is a simple estimation method that can be improved in the future
+  const estimateTokenCount = (text: string): number => {
+    // Simple heuristic: ~4 chars per token for English text
+    return Math.ceil(text.length / 4);
+  };
+
+  // Reserve tokens for system messages and the response
+  const systemReservedTokens = 2000; 
+  
+  // Get total token count and identify system messages
+  let totalTokens = 0;
+  const systemMessages: Message[] = [];
+  const nonSystemMessages: Message[] = [];
+  
+  // Split messages by type and count tokens
+  for (const msg of conversation) {
+    let contentText = '';
+    if (typeof msg.content === 'string') {
+      contentText = msg.content;
+    } else {
+      contentText = msg.content.map(block => {
+        if (block.type === 'text') return block.text;
+        if (block.type === 'tool_result') return block.content;
+        if (block.type === 'thinking') return block.thinking;
+        if (block.type === 'redacted_thinking') return block.data;
+        if (block.type === 'tool_use') return JSON.stringify(block.input);
+        return '';
+      }).join('\n');
+    }
+    
+    const tokenCount = estimateTokenCount(contentText);
+    totalTokens += tokenCount;
+    
+    if (msg.role === 'system') {
+      systemMessages.push(msg);
+    } else {
+      // Create a metadata object that includes token count
+      const metadata = { ...(msg.metadata || {}), estimatedTokens: tokenCount };
+      nonSystemMessages.push({ ...msg, metadata });
+    }
+  }
+  
+  // Log the current context size if in verbose mode
+  if (verbose) {
+    console.log(chalk.dim(`Current context size: ~${totalTokens} tokens`));
+  }
+  
+  // If we're within limits, return the original conversation
+  if (totalTokens <= maxContextLength) {
+    return conversation;
+  }
+  
+  // We need to trim the conversation history
+  if (verbose) {
+    console.log(chalk.yellow(`Context window limit exceeded, compacting history...`));
+  }
+  
+  // Always keep system messages
+  const compactedConversation = [...systemMessages];
+  
+  // Available tokens for non-system messages
+  const availableTokens = maxContextLength - systemReservedTokens;
+  
+  // Sort non-system messages by recency (newest first)
+  const sortedMessages = [...nonSystemMessages].reverse();
+  
+  // Keep most recent messages up to available token limit
+  let usedTokens = 0;
+  for (const msg of sortedMessages) {
+    const tokenCount = msg.metadata?.estimatedTokens || 0;
+    if (usedTokens + tokenCount <= availableTokens) {
+      compactedConversation.push(msg);
+      usedTokens += tokenCount;
+    } else {
+      // If this is an important message (e.g., tool result), try to keep it
+      if (msg.metadata?.isToolResult && usedTokens + tokenCount <= availableTokens * 1.1) {
+        compactedConversation.push(msg);
+        usedTokens += tokenCount;
+      }
+    }
+  }
+  
+  // Re-sort messages to maintain chronological order
+  compactedConversation.sort((a, b) => {
+    if (a.role === 'system' && b.role !== 'system') return -1;
+    if (a.role !== 'system' && b.role === 'system') return 1;
+    // For non-system messages, use the order they were added
+    const aIndex = conversation.indexOf(a);
+    const bIndex = conversation.indexOf(b);
+    return aIndex - bIndex;
+  });
+  
+  if (verbose) {
+    console.log(chalk.green(`Conversation compacted from ~${totalTokens} to ~${usedTokens + systemReservedTokens} tokens`));
+  }
+  
+  return compactedConversation;
+}
+
+/**
+ * Interface for streaming Ollama response
+ */
+interface StreamingOptions {
+  onToken: (token: string) => void;
+  onComplete: (fullResponse: string) => void;
+  onError: (error: Error) => void;
+}
+
+/**
+ * Stream a response from Ollama with token-by-token output
+ */
+async function streamOllamaResponse(
+  ollamaClient: OllamaClient,
+  prompt: string,
+  options: StreamingOptions,
+  context?: number[]
+): Promise<{ response: string; context?: number[] }> {
+  let retryCount = 0;
+  const maxRetries = 3;
+  const backoffDelay = 1000; // Start with 1 second delay
+
+  while (retryCount < maxRetries) {
+    try {
+      // Access the Ollama config to build the request
+      const config = getConfig();
+      const ollamaConfig = config.api?.ollama || {};
+      
+      const baseURL = `${ollamaConfig.host || 'http://localhost'}:${ollamaConfig.port || 11434}`;
+      const model = ollamaConfig.model || 'llama2';
+      const temperature = ollamaConfig.temperature || 0.7;
+      const maxTokens = ollamaConfig.maxTokens || 4096;
+      const systemPrompt = ollamaConfig.systemPrompt || 'You are a helpful AI assistant.';
+      
+      // Options for the streaming request
+      const requestData = {
+        model,
+        prompt,
+        context,
+        options: {
+          temperature,
+          num_predict: maxTokens,
+        },
+        stream: true,
+        system: systemPrompt,
+      };
+
+      // Make the streaming request
+      const response = await axios.post(`${baseURL}/api/generate`, requestData, {
+        responseType: 'stream',
+      });
+
+      let fullResponse = '';
+      let responseContext: number[] | undefined;
+      
+      // Create a promise that will resolve when the stream is done
+      return new Promise((resolve, reject) => {
+        // Set a timeout for the entire streaming operation
+        const streamTimeout = setTimeout(() => {
+          reject(new Error('Response streaming timed out'));
+        }, 60000); // 60 second timeout
+
+        // Explicitly type the data event handler
+        (response.data as any).on('data', (chunk: Buffer) => {
+          try {
+            const lines = chunk.toString().trim().split('\n');
+            
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              
+              try {
+                const data = JSON.parse(line);
+                
+                // Extract the token and context
+                if (data.response) {
+                  fullResponse += data.response;
+                  options.onToken(data.response);
+                }
+                
+                // If we have context, update it
+                if (data.context) {
+                  responseContext = data.context;
+                }
+                
+                // Check if done
+                if (data.done) {
+                  options.onComplete(fullResponse);
+                }
+              } catch (parseError) {
+                // If we can't parse as JSON, still try to show the output
+                const text = line.toString().trim();
+                if (text) {
+                  fullResponse += text;
+                  options.onToken(text);
+                }
+              }
+            }
+          } catch (streamError) {
+            clearTimeout(streamTimeout);
+            options.onError(streamError instanceof Error ? streamError : new Error(String(streamError)));
+            reject(streamError);
+          }
+        });
+        
+        // Set up error handler
+        (response.data as any).on('error', (err: Error) => {
+          clearTimeout(streamTimeout);
+          options.onError(err);
+          reject(err);
+        });
+        
+        // Set up end handler
+        (response.data as any).on('end', () => {
+          clearTimeout(streamTimeout);
+          resolve({
+            response: fullResponse,
+            context: responseContext,
+          });
+        });
+      });
+    } catch (error) {
+      retryCount++;
+      
+      // If we've exhausted retries, give up
+      if (retryCount >= maxRetries) {
+        options.onError(error instanceof Error ? error : new Error(String(error)));
+        return { response: '' };
+      }
+      
+      // Log the retry attempt
+      logger.logAction('streamRetry', { 
+        attempt: retryCount, 
+        maxRetries, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+      
+      // Wait before retrying with exponential backoff
+      await new Promise(resolve => setTimeout(resolve, backoffDelay * Math.pow(2, retryCount - 1)));
+      continue;
+    }
+  }
+  
+  // This should never be reached due to the return in the catch block
+  return { response: '' };
+}
+
+/**
  * Start self mode session using Ollama
  */
 export async function startSelfMode(options: {
   verbose?: boolean;
 }): Promise<void> {
-  console.log(chalk.blue('Initializing self-hosted mode using Ollama...'));
-  const verbose = options.verbose || false;
-
   try {
-    // Initialize configuration
-    const config = initializeConfig();
-
-    // Initialize Ollama client
+    logger.logAction('startSelfMode', { options });
+    
+    // Initialize components
+    const config = await initializeConfig();
     const ollamaClient = await initializeOllamaClient();
+    const tools = await loadTools();
     
-    // Initialize embeddings
-    const embeddings = new OllamaEmbeddings();
-
-    // Load available tools
-    await loadTools();
-    console.log(
-      chalk.cyan('Loaded tools: ') +
-        getAllTools()
-          .map((t) => t.name)
-          .join(', '),
+    // Initialize conversation context
+    const conversation: Message[] = [];
+    
+    // Load system prompt and project context
+    const systemPrompt = await loadSystemPrompt();
+    const projectContext = await collectProjectContext();
+    const gitContext = await collectGitContext();
+    const dirStructure = await getDirectoryStructureSummary();
+    
+    // Add system messages
+    conversation.push(
+      { role: 'system', content: systemPrompt.content },
+      { role: 'system', content: `Project Context:\n${JSON.stringify(projectContext)}` },
+      { role: 'system', content: `Git Context:\n${JSON.stringify(gitContext)}` },
+      { role: 'system', content: `Directory Structure:\n${dirStructure}` }
     );
-
-    // Initialize permission config
-    initializePermissionConfig();
-
-    // Set up history file
-    const historyDir = path.join(os.homedir(), '.forq');
-    const historyFile = path.join(historyDir, 'self_history');
-
-    if (!fs.existsSync(historyDir)) {
-      fs.mkdirSync(historyDir, { recursive: true });
-    }
-
-    let history: string[] = [];
-    if (fs.existsSync(historyFile)) {
-      try {
-        history = fs.readFileSync(historyFile, 'utf8').split('\n').filter(Boolean);
-      } catch (error) {
-        console.error('Error loading history:', (error as Error).message);
-      }
-    }
-
-    // Create tool context based on current working directory
-    const toolContext: ToolContext = {
-      cwd: process.cwd(),
-      logger: logger,
-    };
-
-    // Initialize conversation with system prompt
-    const systemPrompt = loadSystemPrompt();
-    let conversation: Message[] = [systemPrompt];
-
-    // Add project context
-    const projectInstructions = loadProjectInstructions();
-    if (projectInstructions) {
-      conversation.push({
-        role: 'system',
-        content: `Project-Specific Instructions:\n${projectInstructions}`,
-      });
-    }
-
-    // Add git context
-    const gitContextInfo = collectGitContext();
-    if (gitContextInfo) {
-      const gitContextString = JSON.stringify(gitContextInfo, null, 2);
-      conversation.push({
-        role: 'system',
-        content: `Git Context:\n${gitContextString}`,
-      });
-      console.log(chalk.green('Added git context to conversation'));
-    }
-
-    // Add project structure summary
-    const structureSummary = getDirectoryStructureSummary();
-    if (structureSummary) {
-      conversation.push({
-        role: 'system',
-        content: `Project Structure:\n${structureSummary}`,
-      });
-      console.log(chalk.green('Added project structure context to conversation'));
-    }
-
-    // Add tools schema
-    const toolsSchema = getToolsSchema();
-    conversation.push({
-      role: 'system',
-      content: `Available Tools:\n${JSON.stringify(toolsSchema, null, 2)}`,
+    
+    logger.logAction('contextInitialized', {
+      systemPromptLength: systemPrompt.content.toString().length,
+      projectContextLength: JSON.stringify(projectContext).length,
+      gitContextLength: JSON.stringify(gitContext).length,
+      dirStructureLength: dirStructure ? dirStructure.length : 0
     });
-    
-    // Clean up function to call when exiting
-    function cleanup(): void {
-      // Save history
+
+    // Main interaction loop
+    while (true) {
       try {
-        fs.writeFileSync(historyFile, history.join('\n'));
-      } catch (error) {
-        console.error('Error saving history:', (error as Error).message);
-      }
-
-      // Save permissions
-      savePermissionConfig();
-
-      // Other cleanup tasks
-      cleanupPermissionConfig();
-    }
-
-    // Start the REPL
-    console.log(chalk.green('Self-hosted mode started. Type your queries below.\n'));
-    console.log(
-      chalk.yellow('Special commands:') +
-        '\n  /help    - Show available commands' +
-        '\n  /clear   - Clear the conversation history' +
-        '\n  /exit    - Exit the session' +
-        '\n  /compact - Compact conversation history to save tokens' +
-        '\n  /status  - Show current Ollama status and models\n',
-    );
-
-    // Main REPL loop
-    let running = true;
-    let context: number[] | undefined = undefined; // For Ollama's context window
-
-    while (running) {
-      try {
-        const { input } = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'input',
-            message: chalk.cyan('You:'),
-            prefix: '',
-          },
-        ]);
+        const { input } = await inquirer.prompt([{
+          type: 'input',
+          name: 'input',
+          message: chalk.cyan('You:'),
+          prefix: '',
+        }]);
 
         // Process special commands
-        const commandResult = processSpecialCommands(input, conversation, verbose);
+        const commandResult = processSpecialCommands(input, conversation, options.verbose);
         if (commandResult.wasCommand) {
           if (commandResult.result === 'exit') {
-            running = false;
-            console.log(chalk.green('Goodbye!'));
             break;
-          } else if (commandResult.result === 'status') {
-            // Show current Ollama status and models
-            try {
-              const models = await ollamaClient.listModels();
-              console.log(chalk.cyan('Current Ollama Models:'));
-              models.forEach(model => {
-                console.log(`- ${model.name} (${model.details.parameter_size})`);
-              });
-              console.log('');
-            } catch (error) {
-              console.error(chalk.red(`Error fetching models: ${(error as Error).message}`));
-            }
-            continue;
-          } else {
-            console.log(commandResult.result);
-            continue;
           }
-        }
-
-        // Check if input is empty or just whitespace
-        if (!input.trim()) {
+          if (commandResult.result) {
+            console.log(commandResult.result);
+          }
           continue;
         }
 
-        // Add user input to conversation
+        // Add user message to conversation
         conversation.push({ role: 'user', content: input });
-        history.push(input);
+        logger.logConversation(`User: ${input}`);
 
         // Format conversation for Ollama
         const prompt = formatMessagesForOllama(conversation);
+        
+        // Stream response from Ollama
+        let fullResponse = '';
+        await streamOllamaResponse(ollamaClient, prompt, {
+          onToken: (token) => {
+            process.stdout.write(token);
+          },
+          onComplete: (response) => {
+            fullResponse = response;
+            logger.logConversation(`Assistant: ${response}`);
+          },
+          onError: (error) => {
+            logger.logError(error, 'Error streaming response');
+            console.error(chalk.red('Error:', error.message));
+          }
+        });
 
-        // Display thinking message
-        console.log(chalk.dim('Thinking...'));
+        // Add assistant response to conversation
+        conversation.push({ role: 'assistant', content: fullResponse });
         
-        // Send to Ollama
-        const response = await ollamaClient.createCompletion(prompt, context);
-        
-        // Update context for next exchange
-        context = response.context;
-        
-        // Add response to conversation
-        conversation.push({ role: 'assistant', content: response.response });
-        
-        // Check for tool calls in the response
-        const parsedResponse = parseResponseForToolCalls(response.response);
-        
-        // If there are tool calls, process them
-        if (parsedResponse.hasToolCalls && parsedResponse.toolCalls.length > 0) {
-          for (const toolCall of parsedResponse.toolCalls) {
-            // Validate the tool call
-            const validation = validateToolCall(toolCall.name, toolCall.parameters);
-            
-            if (!validation.isValid) {
-              console.log(chalk.red(`Invalid tool call: ${validation.error}`));
-              continue;
-            }
-            
-            console.log(chalk.dim(`Executing tool: ${toolCall.name}...`));
-            
-            try {
-              // Execute the tool using the name and parameters
-              const result = await executeTool(
-                {
-                  name: toolCall.name,
-                  parameters: toolCall.parameters
-                },
-                toolContext
-              );
-              
-              // Add tool result to conversation
-              conversation.push({
-                role: 'system',
-                content: `Tool Result (${toolCall.name}):\n${JSON.stringify(result, null, 2)}`,
-              });
-              
-              console.log(chalk.dim(`Tool ${toolCall.name} completed.`));
-            } catch (error) {
-              console.error(chalk.red(`Error executing tool ${toolCall.name}: ${(error as Error).message}`));
-              
-              // Add error to conversation
-              conversation.push({
-                role: 'system',
-                content: `Tool Error (${toolCall.name}):\n${(error as Error).message}`,
-              });
-            }
-          }
-          
-          // After executing tools, get a follow-up response
-          console.log(chalk.dim('Processing tool results...'));
-          
-          // Format updated conversation
-          const updatedPrompt = formatMessagesForOllama(conversation);
-          
-          // Get follow-up response
-          const followUpResponse = await ollamaClient.createCompletion(updatedPrompt, context);
-          
-          // Update context
-          context = followUpResponse.context;
-          
-          // Add follow-up response
-          conversation.push({ role: 'assistant', content: followUpResponse.response });
-          
-          // Display the follow-up response
-          console.log(chalk.green('\nAssistant:'));
-          console.log(followUpResponse.response);
-        } else {
-          // Display the initial response
-          console.log(chalk.green('\nAssistant:'));
-          console.log(response.response);
-        }
-        
-        // Check if conversation needs compacting
+        // Manage conversation history
         if (conversation.length > MAX_CONVERSATION_LENGTH) {
-          const systemMessages = conversation.filter(msg => msg.role === 'system');
-          const recentMessages = conversation
-            .filter(msg => msg.role !== 'system')
-            .slice(-MAX_CONVERSATION_LENGTH / 2);
-          
-          conversation = [...systemMessages, ...recentMessages];
-          
-          if (verbose) {
-            console.log(chalk.dim('Conversation history automatically compacted.'));
-          }
+          const compactedConversation = manageConversationHistory(conversation);
+          conversation.length = 0;
+          conversation.push(...compactedConversation);
+          logger.logAction('conversationCompacted', { 
+            originalLength: conversation.length,
+            newLength: compactedConversation.length 
+          });
         }
+
       } catch (error) {
-        logger.logError(error as Error, 'Error in self mode REPL loop');
-        console.error(chalk.red(`Error: ${(error as Error).message}`));
+        logger.logError(error as Error, 'Error in conversation loop');
+        console.error(chalk.red('Error:', (error as Error).message));
       }
     }
-    
-    // Run cleanup before exiting
-    cleanup();
-
   } catch (error) {
-    logger.logError(error as Error, 'Error in self mode');
-    console.error(chalk.red(`Error: ${(error as Error).message}`));
+    logger.logError(error as Error, 'Fatal error in self mode');
+    console.error(chalk.red('Fatal error:', (error as Error).message));
+    throw error;
+  } finally {
+    // Cleanup
+    try {
+      await cleanupPermissionConfig();
+      logger.logAction('selfMode', { status: 'completed' });
+    } catch (error) {
+      logger.logError(error as Error, 'Error during cleanup');
+    }
   }
 } 
