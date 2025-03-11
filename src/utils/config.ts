@@ -32,6 +32,16 @@ export interface ForqConfig {
       apiKey?: string;
       model?: string;
     };
+    ollama?: {
+      host?: string;
+      port?: number;
+      model?: string;
+      embeddingModel?: string;
+      maxTokens?: number;
+      temperature?: number;
+      contextWindow?: number;
+      systemPrompt?: string;
+    };
   };
 
   // Tool settings and permissions
@@ -266,6 +276,16 @@ export function createDefaultConfig(global: boolean): void {
         maxTokens: 4000,
         temperature: 0.7,
         completeToolCycle: true,
+      },
+      ollama: {
+        host: 'http://localhost',
+        port: 11434,
+        model: 'mistral',
+        embeddingModel: 'nomic-embed-text',
+        maxTokens: 4096,
+        temperature: 0.7,
+        contextWindow: 8192,
+        systemPrompt: 'You are a helpful AI assistant.',
       },
     },
     tools: {},
