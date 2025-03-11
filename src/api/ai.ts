@@ -19,9 +19,13 @@ import chalk from 'chalk';
 // Load environment variables
 dotenv.config();
 
+// Check if running in self mode
+const isSelfMode = process.argv.some(arg => arg.includes('self'));
+console.log('Running in self mode:', isSelfMode);
+
 // Set up Anthropic client with API key
 const apiKey = process.env.ANTHROPIC_API_KEY;
-if (!apiKey) {
+if (!apiKey && !isSelfMode) {
   console.error(
     chalk.red('Error: ANTHROPIC_API_KEY environment variable is required. Set it in .env file.'),
   );

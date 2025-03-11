@@ -9,6 +9,7 @@ import * as os from 'os';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const inquirer = require('inquirer');
 import chalk from 'chalk';
+import axios from 'axios';
 
 import { OllamaClient } from '../api/ollama';
 import { OllamaEmbeddings } from '../embeddings/ollama';
@@ -493,7 +494,7 @@ async function streamOllamaResponse(
       const ollamaConfig = config.api?.ollama || {};
       
       const baseURL = `${ollamaConfig.host || 'http://localhost'}:${ollamaConfig.port || 11434}`;
-      const model = ollamaConfig.model || 'llama2';
+      const model = ollamaConfig.model || 'llama3.1';
       const temperature = ollamaConfig.temperature || 0.7;
       const maxTokens = ollamaConfig.maxTokens || 4096;
       const systemPrompt = ollamaConfig.systemPrompt || 'You are a helpful AI assistant.';

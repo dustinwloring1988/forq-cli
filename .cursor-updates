@@ -95,3 +95,5 @@ Added detailed breakdown of Ollama integration task into three main sections:
 - Added timeout handling for streaming responses
 - Added proper error handling and fallbacks for model loading and streaming
 - Updated tasks checklist to mark completed items
+
+- Added import statement for `axios` in `src/modes/self.ts` to resolve 'axios is not defined' error.

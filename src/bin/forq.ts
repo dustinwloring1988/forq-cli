@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+// Check if running in self mode
+if (process.argv.includes('self')) {
+  process.env.SELF_MODE = 'true';
+}
+
 import { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
