@@ -44,6 +44,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@types/axios": "^0.9.36",
+    "axios": "^1.8.2",
     "chalk": "^4.1.2",
     "commander": "^13.1.0",
     "cosine-similarity": "^1.0.1",
