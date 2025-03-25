@@ -23,18 +23,23 @@ dotenv.config();
 const isSelfMode = process.argv.some(arg => arg.includes('self'));
 console.log('Running in self mode:', isSelfMode);
 
-// Set up Anthropic client with API key
-const apiKey = process.env.ANTHROPIC_API_KEY;
-if (!apiKey && !isSelfMode) {
-  console.error(
-    chalk.red('Error: ANTHROPIC_API_KEY environment variable is required. Set it in .env file.'),
-  );
-  process.exit(1);
-}
+let anthropic: Anthropic | null = null;
 
-const anthropic = new Anthropic({
-  apiKey,
-});
+function initializeAnthropicClient(): void {
+  if (anthropic) return;
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey && !isSelfMode) {
+    console.error(
+      chalk.red('Error: ANTHROPIC_API_KEY environment variable is required. Set it in .env file.'),
+    );
+    process.exit(1);
+  }
+
+  anthropic = new Anthropic({
+    apiKey,
+  });
+}
 
 /**
  * Find the last index in an array that satisfies the predicate function
@@ -330,6 +335,9 @@ export interface AIResponse {
  * @returns Promise resolving to an AIResponse object with text and toolCalls
  */
 export async function queryAI(messages: ForqMessage[], options?: AIOptions): Promise<AIResponse> {
+  initializeAnthropicClient();
+  if (!anthropic) throw new Error('Failed to initialize Anthropic client');
+
   try {
     const anthropicMessages = convertToAnthropicMessages(messages);
     const systemPrompt = extractSystemMessage(messages);
@@ -406,6 +414,9 @@ export async function streamAI(
   onComplete?: (response: AIResponse) => Promise<void> | void,
   options?: AIOptions,
 ): Promise<AIResponse> {
+  initializeAnthropicClient();
+  if (!anthropic) throw new Error('Failed to initialize Anthropic client');
+
   try {
     const anthropicMessages = convertToAnthropicMessages(messages);
     const systemPrompt = extractSystemMessage(messages);
@@ -535,6 +546,9 @@ export async function sendToolResultToAI(
   toolUseId: string,
   options?: AIOptions,
 ): Promise<AIResponse> {
+  initializeAnthropicClient();
+  if (!anthropic) throw new Error('Failed to initialize Anthropic client');
+
   try {
     // If the tool result indicates a permission error, handle it specially
     if (!toolResult.success && toolResult.error?.includes('Permission denied')) {

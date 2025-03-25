@@ -29,6 +29,7 @@ import {
   getDirectoryStructureSummary,
 } from './utils/context';
 import { getConfig, initializeConfig, ForqConfig } from './utils/config';
+import { validateEnvironment } from './utils/env';
 
 // Maximum number of messages to keep in history before compacting
 const MAX_CONVERSATION_LENGTH = 20;
@@ -38,6 +39,9 @@ const MAX_CONVERSATION_LENGTH = 20;
  * Handles user input and interacts with AI
  */
 export async function startRepl(): Promise<void> {
+  // Validate environment with API key requirement
+  validateEnvironment(true);
+
   // Initialize configuration
   const config = initializeConfig();
 

@@ -99,3 +99,4 @@ Added detailed breakdown of Ollama integration task into three main sections:
 - Added import statement for `axios` in `src/modes/self.ts` to resolve 'axios is not defined' error.
 
 - Added MCP (Message Control Protocol) server support with WebSocket integration for external client connections
+- Fixed MCP server to run without requiring ANTHROPIC_API_KEY by making API key validation conditional

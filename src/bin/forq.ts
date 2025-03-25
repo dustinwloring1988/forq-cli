@@ -19,6 +19,7 @@ import {
   initializeConfig,
 } from '../utils/config';
 import { MCPServer } from '../server/mcp';
+import { validateEnvironment } from '../utils/env';
 
 // Read package.json for version
 const packageJsonPath = path.join(__dirname, '..', '..', '..', 'package.json');
@@ -394,6 +395,10 @@ program
   .action(async (options) => {
     console.log('Starting MCP server...');
     try {
+      // Initialize config without requiring API key
+      validateEnvironment(false);
+      initializeConfig();
+
       const server = new MCPServer({
         port: parseInt(options.port, 10),
         host: options.host
