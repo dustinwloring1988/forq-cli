@@ -18,6 +18,7 @@ import {
   createDefaultConfig,
   initializeConfig,
 } from '../utils/config';
+import { MCPServer } from '../server/mcp';
 
 // Read package.json for version
 const packageJsonPath = path.join(__dirname, '..', '..', '..', 'package.json');
@@ -117,6 +118,26 @@ EXAMPLES
   $ forq config --global
   $ forq config --project --key apiKeys.anthropic --value "your-api-key"
   $ forq config --global --key preferences.theme --delete
+`,
+
+  mcp: `
+DESCRIPTION
+  Start the MCP (Message Control Protocol) server for external client connections.
+  
+  The MCP server allows external clients to connect and interact with Forq
+  through a WebSocket connection, enabling integration with other tools and
+  applications.
+
+USAGE
+  $ forq mcp [OPTIONS]
+
+OPTIONS
+  -p, --port <number>  Port to listen on (default: 3000)
+  -h, --host <string>  Host to listen on (default: localhost)
+
+EXAMPLES
+  $ forq mcp
+  $ forq mcp --port 8080 --host 0.0.0.0
 `,
 };
 
@@ -361,6 +382,34 @@ program
       }
     } catch (error) {
       console.error('Error managing configuration:', (error as Error).message);
+    }
+  });
+
+// Implement the MCP server command
+program
+  .command('mcp')
+  .description('Start the MCP server for external client connections')
+  .option('-p, --port <number>', 'Port to listen on', '3000')
+  .option('-h, --host <string>', 'Host to listen on', 'localhost')
+  .action(async (options) => {
+    console.log('Starting MCP server...');
+    try {
+      const server = new MCPServer({
+        port: parseInt(options.port, 10),
+        host: options.host
+      });
+
+      // Handle graceful shutdown
+      process.on('SIGINT', () => {
+        console.log('\nShutting down MCP server...');
+        server.stop();
+        process.exit(0);
+      });
+
+      console.log(`MCP server running on ws://${options.host}:${options.port}`);
+    } catch (error) {
+      console.error('Error starting MCP server:', (error as Error).message);
+      process.exit(1);
     }
   });
 

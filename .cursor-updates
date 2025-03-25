@@ -97,3 +97,5 @@ Added detailed breakdown of Ollama integration task into three main sections:
 - Updated tasks checklist to mark completed items
 
 - Added import statement for `axios` in `src/modes/self.ts` to resolve 'axios is not defined' error.
+
+- Added MCP (Message Control Protocol) server support with WebSocket integration for external client connections
