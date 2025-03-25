@@ -3,6 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { MCPClient, MCPConfig, MCPMessage } from '../types/mcp';
 import chalk from 'chalk';
 
+interface MathOperation {
+  operation: 'add' | 'subtract' | 'multiply' | 'divide';
+  a: number;
+  b: number;
+}
+
 export class MCPServer {
   private wss: WebSocket.Server;
   private clients: Map<string, MCPClient> = new Map();
@@ -45,12 +51,25 @@ export class MCPServer {
         console.log(chalk.yellow(`Client disconnected: ${clientId}`));
       });
 
-      // Send welcome message
+      // Send welcome message with available operations
       client.send({
         type: 'welcome',
         payload: {
           clientId,
-          message: 'Connected to Forq CLI MCP Server'
+          message: 'Connected to Forq CLI MCP Server',
+          availableOperations: {
+            math: {
+              operations: ['add', 'subtract', 'multiply', 'divide'],
+              example: {
+                type: 'math',
+                payload: {
+                  operation: 'add',
+                  a: 5,
+                  b: 3
+                }
+              }
+            }
+          }
         }
       });
     });
@@ -68,8 +87,57 @@ export class MCPServer {
       case 'command':
         this.handleCommand(client, message.payload);
         break;
+      case 'math':
+        this.handleMathOperation(client, message.payload);
+        break;
       default:
         client.send({ type: 'error', payload: 'Unknown message type' });
+    }
+  }
+
+  private handleMathOperation(client: MCPClient, payload: MathOperation) {
+    try {
+      const { operation, a, b } = payload;
+      let result: number;
+
+      switch (operation) {
+        case 'add':
+          result = a + b;
+          break;
+        case 'subtract':
+          result = a - b;
+          break;
+        case 'multiply':
+          result = a * b;
+          break;
+        case 'divide':
+          if (b === 0) {
+            throw new Error('Division by zero');
+          }
+          result = a / b;
+          break;
+        default:
+          throw new Error('Invalid operation');
+      }
+
+      client.send({
+        type: 'math_response',
+        payload: {
+          operation,
+          a,
+          b,
+          result
+        }
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      client.send({
+        type: 'error',
+        payload: {
+          message: 'Math operation failed',
+          error: errorMessage
+        }
+      });
     }
   }
 
